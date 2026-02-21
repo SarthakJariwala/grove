@@ -25,12 +25,19 @@ const (
 )
 
 type treeRow struct {
-	typeOf      rowType
-	folderIndex int
-	sessionName string
-	leafName    string
-	status      string
-	windows     int
+	typeOf         rowType
+	folderIndex    int
+	sessionName    string
+	leafName       string
+	status         string
+	windows        int
+	hasAlerts      bool
+	alertsBell     bool
+	alertsActivity bool
+	alertsSilence  bool
+	currentCommand string
+	paneTitle      string
+	lastActivity   int64
 }
 
 type promptMode int
@@ -108,6 +115,8 @@ type styleSet struct {
 	statusDotAttached lipgloss.Style
 	statusDotDetached lipgloss.Style
 	windowCount       lipgloss.Style
+	commandDim        lipgloss.Style
+	alertIndicator    lipgloss.Style
 
 	// Detail pane
 	detailName   lipgloss.Style
@@ -158,6 +167,8 @@ func defaultStyles() styleSet {
 		statusDotAttached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
 		statusDotDetached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
 		windowCount:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		commandDim:        lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Faint(true),
+		alertIndicator:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)).Bold(true),
 
 		// Detail pane
 		detailName:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
@@ -521,12 +532,19 @@ func (m *Model) rebuildRows() {
 				status = "attached"
 			}
 			row := treeRow{
-				typeOf:      rowSession,
-				folderIndex: folderIndex,
-				sessionName: s.Name,
-				leafName:    leaf,
-				status:      status,
-				windows:     s.Windows,
+				typeOf:         rowSession,
+				folderIndex:    folderIndex,
+				sessionName:    s.Name,
+				leafName:       leaf,
+				status:         status,
+				windows:        s.Windows,
+				hasAlerts:      s.HasAlerts,
+				alertsBell:     s.AlertsBell,
+				alertsActivity: s.AlertsActivity,
+				alertsSilence:  s.AlertsSilence,
+				currentCommand: s.CurrentCommand,
+				paneTitle:      s.PaneTitle,
+				lastActivity:   s.LastActivity,
 			}
 
 			if folderMatches || query == "" || containsAny(strings.ToLower(leaf), strings.ToLower(s.Name), strings.ToLower(status), query) {
@@ -612,18 +630,38 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 			}
 
 			winStr := fmt.Sprintf("(%dw)", row.windows)
-			// Layout: [indent 2][connector 1][ 1][dot 1][ 1][name][ 1][winStr]
-			nameMax := maxWidth - 2 - 1 - 1 - 1 - 1 - 1 - len(winStr)
+
+			// Build suffix: typed alert indicators, then pane title or command
+			suffix := ""
+			plainSuffix := ""
+			alertStr := alertIndicatorStr(row)
+			if alertStr != "" {
+				suffix = " " + m.styles.alertIndicator.Render(alertStr)
+				plainSuffix = " " + alertStr
+			}
+			displayTitle := paneDisplayTitle(row)
+			if displayTitle != "" {
+				cmdStr := truncateRight(displayTitle, 12)
+				suffix += " " + m.styles.commandDim.Render(cmdStr)
+				plainSuffix += " " + cmdStr
+			} else if row.currentCommand != "" && !isShellCommand(row.currentCommand) {
+				cmdStr := truncateRight(row.currentCommand, 12)
+				suffix += " " + m.styles.commandDim.Render(cmdStr)
+				plainSuffix += " " + cmdStr
+			}
+
+			// Layout: [indent 2][connector 1][ 1][dot 1][ 1][name][ 1][winStr][suffix]
+			nameMax := maxWidth - 2 - 1 - 1 - 1 - 1 - 1 - len(winStr) - len(plainSuffix)
 			if nameMax < 6 {
 				nameMax = 6
 			}
 			name := truncateRight(row.leafName, nameMax)
 
 			if isSelected {
-				plain := "▎" + connector + " " + dotChar + " " + name + " " + winStr
+				plain := "▎" + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
 				rows = append(rows, m.selectedLine(plain, maxWidth))
 			} else if isKillTarget {
-				plain := "  " + connector + " " + dotChar + " " + name + " " + winStr
+				plain := "  " + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
 				rows = append(rows, m.styles.rowKillTarget.Render(padRight(plain, maxWidth)))
 			} else {
 				dot := m.styles.statusDotDetached.Render(dotChar)
@@ -631,7 +669,7 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 					dot = m.styles.statusDotAttached.Render(dotChar)
 				}
 				winCount := m.styles.windowCount.Render(winStr)
-				line := "  " + m.styles.helpSep.Render(connector) + " " + dot + " " + m.styles.rowSession.Render(name) + " " + winCount
+				line := "  " + m.styles.helpSep.Render(connector) + " " + dot + " " + m.styles.rowSession.Render(name) + " " + winCount + suffix
 				rows = append(rows, line)
 			}
 		}
@@ -697,17 +735,54 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 		}
 
 		if len(sessions) > 0 {
+			// Activity summary
+			running := 0
+			bellCount := 0
+			activityCount := 0
+			silenceCount := 0
+			for _, s := range sessions {
+				if s.CurrentCommand != "" && !isShellCommand(s.CurrentCommand) {
+					running++
+				}
+				if s.AlertsBell {
+					bellCount++
+				}
+				if s.AlertsActivity {
+					activityCount++
+				}
+				if s.AlertsSilence {
+					silenceCount++
+				}
+			}
+			if running > 0 || bellCount > 0 || activityCount > 0 || silenceCount > 0 {
+				var parts []string
+				if running > 0 {
+					parts = append(parts, fmt.Sprintf("%d running", running))
+				}
+				if bellCount > 0 {
+					parts = append(parts, fmt.Sprintf("%d bell", bellCount))
+				}
+				if activityCount > 0 {
+					parts = append(parts, fmt.Sprintf("%d activity", activityCount))
+				}
+				if silenceCount > 0 {
+					parts = append(parts, fmt.Sprintf("%d silence", silenceCount))
+				}
+				lines = append(lines, m.styles.detailMeta.Render(strings.Join(parts, ", ")))
+			}
+
 			lines = append(lines, "", m.styles.infoLabel.Render("Sessions"))
 			for _, s := range sessions {
-				state := "detached"
 				dot := m.styles.statusDotDetached.Render("○")
 				if s.Attached {
-					state = "attached"
 					dot = m.styles.statusDotAttached.Render("●")
 				}
 				leaf := strings.TrimPrefix(s.Name, folder.Namespace+"/")
-				_ = state
-				lines = append(lines, dot+" "+m.styles.infoValue.Render(truncateRight(leaf, maxWidth-4)))
+				entry := dot + " " + m.styles.infoValue.Render(truncateRight(leaf, maxWidth-4))
+				if s.CurrentCommand != "" && !isShellCommand(s.CurrentCommand) {
+					entry += " " + m.styles.commandDim.Render(truncateRight(s.CurrentCommand, 12))
+				}
+				lines = append(lines, entry)
 			}
 		} else {
 			lines = append(lines, "", m.styles.emptyHint.Render("press n to create a session"))
@@ -731,6 +806,33 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 			m.kv("Full name", truncateRight(row.sessionName, maxWidth-12)),
 			m.kv("Folder", folder.Name),
 			m.kv("Path", truncateMiddle(folder.Path, maxWidth-6)),
+		}
+
+		if row.currentCommand != "" {
+			lines = append(lines, m.kv("Running", row.currentCommand))
+		}
+		if title := paneDisplayTitle(row); title != "" {
+			lines = append(lines, m.kv("Title", title))
+		}
+		if row.lastActivity > 0 {
+			d := time.Since(time.Unix(row.lastActivity, 0))
+			lines = append(lines, m.kv("Last active", formatDuration(d)))
+		}
+		if row.hasAlerts {
+			var alertParts []string
+			if row.alertsBell {
+				alertParts = append(alertParts, "bell (!)")
+			}
+			if row.alertsActivity {
+				alertParts = append(alertParts, "activity (#)")
+			}
+			if row.alertsSilence {
+				alertParts = append(alertParts, "silence (~)")
+			}
+			if len(alertParts) == 0 {
+				alertParts = append(alertParts, "alerts pending")
+			}
+			lines = append(lines, m.styles.alertIndicator.Render(alertIndicatorStr(row)+" ")+strings.Join(alertParts, ", "))
 		}
 	}
 
@@ -782,6 +884,27 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 		sessions, err := m.client.ListSessions()
 		if err != nil {
 			return sessionsLoadedMsg{err: err}
+		}
+
+		// Fetch pane info for commands, titles, and alert flags (graceful degradation on failure)
+		panes, paneErr := m.client.ListPanes()
+		if paneErr == nil {
+			states := tmux.ActivePaneStates(panes)
+			for i := range sessions {
+				if st, ok := states[sessions[i].Name]; ok {
+					sessions[i].CurrentCommand = st.Command
+					sessions[i].PaneTitle = st.PaneTitle
+					if st.BellFlag {
+						sessions[i].AlertsBell = true
+					}
+					if st.ActivityFlag {
+						sessions[i].AlertsActivity = true
+					}
+					if st.SilenceFlag {
+						sessions[i].AlertsSilence = true
+					}
+				}
+			}
 		}
 
 		grouped := map[int][]tmux.Session{}
@@ -1085,6 +1208,68 @@ func padToHeight(s string, height int) string {
 		return s
 	}
 	return s + strings.Repeat("\n", height-lines)
+}
+
+func alertIndicatorStr(row treeRow) string {
+	var s string
+	if row.alertsBell {
+		s += "!"
+	}
+	if row.alertsActivity {
+		s += "#"
+	}
+	if row.alertsSilence {
+		s += "~"
+	}
+	return s
+}
+
+func paneDisplayTitle(row treeRow) string {
+	t := strings.TrimSpace(row.paneTitle)
+	if t == "" {
+		return ""
+	}
+	// Filter out bare hostnames and default shell titles — only show titles
+	// that look informative (contain path separators, dots with extensions, or spaces)
+	if strings.Contains(t, "/") || strings.Contains(t, " ") {
+		return t
+	}
+	if dot := strings.LastIndex(t, "."); dot > 0 && dot < len(t)-1 {
+		return t
+	}
+	return ""
+}
+
+func isShellCommand(cmd string) bool {
+	switch strings.ToLower(cmd) {
+	case "zsh", "bash", "fish", "sh", "dash", "ksh":
+		return true
+	}
+	return false
+}
+
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < 30*time.Second:
+		return "just now"
+	case d < 90*time.Second:
+		return "1 min ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%d mins ago", int(d.Minutes()))
+	case d < 2*time.Hour:
+		return "1 hour ago"
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	default:
+		days := int(d.Hours()) / 24
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	}
 }
 
 func (m Model) defaultSessionLeaf(folder config.Folder) string {

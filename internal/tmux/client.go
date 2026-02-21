@@ -10,9 +10,28 @@ import (
 )
 
 type Session struct {
-	Name     string
-	Windows  int
-	Attached bool
+	Name           string
+	Windows        int
+	Attached       bool
+	HasAlerts      bool
+	AlertsBell     bool
+	AlertsActivity bool
+	AlertsSilence  bool
+	LastActivity int64
+	CurrentCommand string
+	PaneTitle      string
+}
+
+type PaneInfo struct {
+	SessionName  string
+	WindowIndex  int
+	Command      string
+	PaneActive   bool
+	WindowActive bool
+	PaneTitle    string
+	ActivityFlag bool
+	BellFlag     bool
+	SilenceFlag  bool
 }
 
 type Client struct{}
@@ -22,7 +41,8 @@ func NewClient() *Client {
 }
 
 func (c *Client) ListSessions() ([]Session, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}:#{session_windows}:#{?session_attached,attached,detached}")
+	cmd := exec.Command("tmux", "list-sessions", "-F",
+		"#{session_name}:#{session_windows}:#{?session_attached,attached,detached}:#{session_alerts}:#{session_activity}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if bytes.Contains(out, []byte("no server running")) {
@@ -39,8 +59,8 @@ func (c *Client) ListSessions() ([]Session, error) {
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) != 3 {
+		parts := strings.SplitN(line, ":", 5)
+		if len(parts) < 3 {
 			continue
 		}
 
@@ -49,11 +69,26 @@ func (c *Client) ListSessions() ([]Session, error) {
 			windows = 0
 		}
 
-		sessions = append(sessions, Session{
+		s := Session{
 			Name:     parts[0],
 			Windows:  windows,
 			Attached: parts[2] == "attached",
-		})
+		}
+
+		if len(parts) >= 4 {
+			alertStr := strings.TrimSpace(parts[3])
+			s.HasAlerts = alertStr != ""
+			s.AlertsBell = strings.Contains(alertStr, "!")
+			s.AlertsActivity = strings.Contains(alertStr, "#")
+			s.AlertsSilence = strings.Contains(alertStr, "~")
+		}
+		if len(parts) >= 5 {
+			if ts, err := strconv.ParseInt(strings.TrimSpace(parts[4]), 10, 64); err == nil {
+				s.LastActivity = ts
+			}
+		}
+
+		sessions = append(sessions, s)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -61,6 +96,109 @@ func (c *Client) ListSessions() ([]Session, error) {
 	}
 
 	return sessions, nil
+}
+
+func (c *Client) ListPanes() ([]PaneInfo, error) {
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F",
+		"#{session_name}\t#{window_index}\t#{pane_current_command}\t#{?pane_active,1,0}\t#{?window_active,1,0}\t#{window_activity_flag}\t#{window_bell_flag}\t#{window_silence_flag}\t#{pane_title}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if bytes.Contains(out, []byte("no server running")) ||
+			bytes.Contains(out, []byte("no current")) {
+			return []PaneInfo{}, nil
+		}
+		return nil, fmt.Errorf("tmux list-panes: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	panes := make([]PaneInfo, 0)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "\t", 9)
+		if len(parts) < 5 {
+			continue
+		}
+
+		winIdx, _ := strconv.Atoi(parts[1])
+		p := PaneInfo{
+			SessionName:  parts[0],
+			WindowIndex:  winIdx,
+			Command:      parts[2],
+			PaneActive:   parts[3] == "1",
+			WindowActive: parts[4] == "1",
+		}
+		if len(parts) >= 6 {
+			p.ActivityFlag = parts[5] == "1"
+		}
+		if len(parts) >= 7 {
+			p.BellFlag = parts[6] == "1"
+		}
+		if len(parts) >= 8 {
+			p.SilenceFlag = parts[7] == "1"
+		}
+		if len(parts) >= 9 {
+			p.PaneTitle = parts[8]
+		}
+		panes = append(panes, p)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan tmux panes: %w", err)
+	}
+
+	return panes, nil
+}
+
+type ActivePaneState struct {
+	Command      string
+	PaneTitle    string
+	BellFlag     bool
+	ActivityFlag bool
+	SilenceFlag  bool
+}
+
+func ActivePaneStates(panes []PaneInfo) map[string]ActivePaneState {
+	result := make(map[string]ActivePaneState)
+	for _, p := range panes {
+		state, exists := result[p.SessionName]
+
+		// Active window+pane provides command and title
+		if p.WindowActive && p.PaneActive {
+			state.Command = p.Command
+			state.PaneTitle = stripTitleBranding(strings.TrimSpace(p.PaneTitle))
+		}
+
+		// Aggregate alert flags across all windows in the session
+		if p.BellFlag {
+			state.BellFlag = true
+		}
+		if p.ActivityFlag {
+			state.ActivityFlag = true
+		}
+		if p.SilenceFlag {
+			state.SilenceFlag = true
+		}
+
+		if p.WindowActive && p.PaneActive || exists {
+			result[p.SessionName] = state
+		}
+	}
+	return result
+}
+
+// stripTitleBranding removes common app-branding prefixes from pane titles
+// (e.g. Claude Code's ✳ prefix) for cleaner display.
+func stripTitleBranding(title string) string {
+	for _, prefix := range []string{"✳ ", "* "} {
+		if strings.HasPrefix(title, prefix) {
+			return strings.TrimPrefix(title, prefix)
+		}
+	}
+	return title
 }
 
 func (c *Client) NewSession(name, cwd string) error {
