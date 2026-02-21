@@ -15,6 +15,7 @@ import (
 )
 
 const refreshInterval = 2 * time.Second
+const statusClearDelay = 3 * time.Second
 
 type rowType int
 
@@ -42,6 +43,24 @@ const (
 	promptFilter
 )
 
+// ── Color palette (forest/grove theme) ──────────────────────────────
+// Primary:   green tones for branding, active states, attached
+// Muted:     grays for borders, secondary text, help
+// Semantic:  amber for detached, red for errors/danger only
+
+const (
+	colorPrimary    = "#73daca" // soft green — title, selection accent, attached
+	colorPrimaryDim = "#3b8070" // dim green — borders, secondary accents
+	colorText       = "#c9d1d9" // light gray — primary text
+	colorTextDim    = "#6e7681" // dim gray — labels, help text, metadata
+	colorTextMuted  = "#484f58" // very dim gray — borders, dividers
+	colorBg         = "#161b22" // dark bg (for selection row only)
+	colorBgSubtle   = "#21262d" // subtle bg — chips, panes
+	colorAmber      = "#d29922" // amber — detached status
+	colorRed        = "#f85149" // red — errors, kill confirmation
+	colorWhite      = "#e6edf3" // bright white — emphasized text
+)
+
 type Model struct {
 	cfg    config.Config
 	client *tmux.Client
@@ -54,6 +73,7 @@ type Model struct {
 	selected  int
 	sessions  map[int][]tmux.Session
 	statusMsg string
+	statusSeq int
 	errMsg    string
 
 	filterQuery       string
@@ -65,46 +85,102 @@ type Model struct {
 }
 
 type styleSet struct {
-	headerTitle      lipgloss.Style
-	headerMeta       lipgloss.Style
-	helpBar          lipgloss.Style
-	pane             lipgloss.Style
-	paneTitle        lipgloss.Style
-	rowFolder        lipgloss.Style
-	rowSession       lipgloss.Style
-	rowSelected      lipgloss.Style
-	statusAttached   lipgloss.Style
-	statusDetached   lipgloss.Style
-	infoLabel        lipgloss.Style
-	infoValue        lipgloss.Style
-	footerOK         lipgloss.Style
-	footerErr        lipgloss.Style
-	footerPrompt     lipgloss.Style
-	footerWarn       lipgloss.Style
-	actionChip       lipgloss.Style
-	actionChipActive lipgloss.Style
+	// Header
+	headerTitle lipgloss.Style
+	headerMeta  lipgloss.Style
+	headerSep   lipgloss.Style
+
+	// Panes
+	pane      lipgloss.Style
+	paneDim   lipgloss.Style // dimmed pane for prompt overlay
+	paneTitle lipgloss.Style
+	divider   lipgloss.Style
+
+	// Tree rows
+	rowFolder       lipgloss.Style
+	rowSession      lipgloss.Style
+	rowSelected     lipgloss.Style
+	rowSelectedText lipgloss.Style
+	selAccent       lipgloss.Style // left accent bar for selection
+	rowKillTarget   lipgloss.Style // red highlight for kill confirmation
+
+	// Status indicators
+	statusDotAttached lipgloss.Style
+	statusDotDetached lipgloss.Style
+	windowCount       lipgloss.Style
+
+	// Detail pane
+	detailName   lipgloss.Style
+	detailStatus lipgloss.Style
+	detailMeta   lipgloss.Style
+	infoLabel    lipgloss.Style
+	infoValue    lipgloss.Style
+
+	// Footer / help bar
+	helpKey    lipgloss.Style
+	helpDesc   lipgloss.Style
+	helpSep    lipgloss.Style
+	footerOK   lipgloss.Style
+	footerErr  lipgloss.Style
+	footerWarn lipgloss.Style
+
+	// Prompt
+	promptLabel lipgloss.Style
+	promptHint  lipgloss.Style
+
+	// Empty state
+	emptyTitle lipgloss.Style
+	emptyHint  lipgloss.Style
 }
 
 func defaultStyles() styleSet {
 	return styleSet{
-		headerTitle:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")),
-		headerMeta:       lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		helpBar:          lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
-		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(1, 2),
-		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
-		rowFolder:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("225")),
-		rowSession:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		rowSelected:      lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Bold(true),
-		statusAttached:   lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true),
-		statusDetached:   lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
-		infoLabel:        lipgloss.NewStyle().Foreground(lipgloss.Color("109")),
-		infoValue:        lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		footerOK:         lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true),
-		footerErr:        lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true),
-		footerPrompt:     lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true),
-		footerWarn:       lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
-		actionChip:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("236")).Padding(0, 2),
-		actionChipActive: lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("33")).Padding(0, 2).Bold(true),
+		// Header
+		headerTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPrimary)),
+		headerMeta:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		headerSep:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+
+		// Panes
+		pane:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorTextMuted)).Padding(0, 1),
+		paneDim:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorTextMuted)).Padding(0, 1).Faint(true),
+		paneTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPrimary)),
+		divider:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+
+		// Tree rows
+		rowFolder:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorText)),
+		rowSession:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
+		rowSelected:     lipgloss.NewStyle().Background(lipgloss.Color(colorBgSubtle)),
+		rowSelectedText: lipgloss.NewStyle().Foreground(lipgloss.Color(colorWhite)).Bold(true).Background(lipgloss.Color(colorBgSubtle)),
+		selAccent:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Background(lipgloss.Color(colorBgSubtle)),
+		rowKillTarget:   lipgloss.NewStyle().Background(lipgloss.Color("#3d1214")),
+
+		// Status indicators
+		statusDotAttached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
+		statusDotDetached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		windowCount:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+
+		// Detail pane
+		detailName:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
+		detailStatus: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
+		detailMeta:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		infoLabel:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		infoValue:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
+
+		// Footer / help bar
+		helpKey:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
+		helpDesc:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		helpSep:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+		footerOK:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
+		footerErr:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)),
+		footerWarn: lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)),
+
+		// Prompt
+		promptLabel: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
+		promptHint:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Faint(true),
+
+		// Empty state
+		emptyTitle: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		emptyHint:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
 	}
 }
 
@@ -123,10 +199,14 @@ type attachedMsg struct {
 	err error
 }
 
+type clearStatusMsg struct {
+	seq int
+}
+
 func NewModel(cfg config.Config, client *tmux.Client) Model {
 	t := textinput.New()
 	t.CharLimit = 512
-	t.Prompt = "> "
+	t.Prompt = ""
 
 	m := Model{
 		cfg:    cfg,
@@ -243,26 +323,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = msg.err.Error()
 			return m, m.loadSessionsCmd()
 		}
-		m.statusMsg = msg.status
-		m.errMsg = ""
+		clearCmd := m.setStatus(msg.status)
 		if msg.attachTarget != "" {
 			return m, tea.Batch(
+				clearCmd,
 				m.loadSessionsCmd(),
 				tea.ExecProcess(m.client.AttachCommand(msg.attachTarget), func(err error) tea.Msg {
 					return attachedMsg{err: err}
 				}),
 			)
 		}
-		return m, m.loadSessionsCmd()
+		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
 
 	case attachedMsg:
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			return m, m.loadSessionsCmd()
 		}
-		m.statusMsg = "detached from session"
-		m.errMsg = ""
-		return m, m.loadSessionsCmd()
+		clearCmd := m.setStatus("detached from session")
+		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
+
+	case clearStatusMsg:
+		if msg.seq == m.statusSeq {
+			m.statusMsg = ""
+		}
+		return m, nil
 
 	case time.Time:
 		return m, tea.Batch(tickCmd(), m.loadSessionsCmd())
@@ -271,84 +356,152 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ── View ────────────────────────────────────────────────────────────
+
 func (m Model) View() string {
+	if m.width == 0 || m.height == 0 {
+		return ""
+	}
+
 	header := m.renderHeader()
-	help := m.renderHelpBar()
+	footer := m.renderFooter()
 
-	maxPaneLines := m.contentHeight()
-	left := m.renderTreePane(maxPaneLines)
-	right := m.renderDetailPane(maxPaneLines)
+	// Calculate content height: total - header(1) - blank line(1) - footer(1)
+	contentH := m.height - 3
+	if contentH < 4 {
+		contentH = 4
+	}
 
-	content := ""
+	// Pane heights = content height minus the border overhead (2 for top/bottom border)
+	paneInnerH := contentH - 2
+	if paneInnerH < 3 {
+		paneInnerH = 3
+	}
+
+	dimPanes := m.promptMode != promptNone
+
+	var content string
 	if m.width > 70 {
-		leftWidth := (m.width * 45) / 100
+		leftWidth := (m.width * 30) / 100
 		if leftWidth < 30 {
 			leftWidth = 30
+		}
+		if leftWidth > 50 {
+			leftWidth = 50
 		}
 		rightWidth := m.width - leftWidth - 1
 		if rightWidth < 20 {
 			rightWidth = 20
 		}
-		leftStyled := lipgloss.NewStyle().Width(leftWidth).Render(left)
-		rightStyled := lipgloss.NewStyle().Width(rightWidth).Render(right)
-		content = lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, " ", rightStyled)
+
+		// innerWidth = totalWidth - border(2) - padding(2)
+		leftInner := leftWidth - 4
+		rightInner := rightWidth - 4
+
+		left := m.renderTreePane(paneInnerH, leftInner, leftWidth, dimPanes)
+		right := m.renderDetailPane(paneInnerH, rightInner, rightWidth, dimPanes)
+
+		content = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 	} else {
-		content = lipgloss.JoinVertical(lipgloss.Left, left, "", right)
+		halfH := paneInnerH / 2
+		if halfH < 3 {
+			halfH = 3
+		}
+		left := m.renderTreePane(halfH, m.width-4, m.width, dimPanes)
+		right := m.renderDetailPane(halfH, m.width-4, m.width, dimPanes)
+		content = lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 
-	status := ""
-	if m.errMsg != "" {
-		status = m.styles.footerErr.Render("error: " + m.errMsg)
-	} else if m.statusMsg != "" {
-		status = m.styles.footerOK.Render(m.statusMsg)
-	}
-
-	if m.promptMode != promptNone {
-		promptTitle := m.promptTitle()
-		status = m.styles.footerPrompt.Render(promptTitle + ": " + m.prompt.View() + " (Enter submit, Esc cancel)")
-	} else if m.confirmKillTarget != "" {
-		status = m.styles.footerWarn.Render("kill session " + m.confirmKillTarget + "? press y to confirm, n to cancel")
-	}
-
-	if status == "" {
-		status = m.styles.headerMeta.Render("ready")
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, help, "", content, "", status)
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", content, footer)
 }
 
 func (m Model) renderHeader() string {
-	title := m.styles.headerTitle.Render("grove")
+	title := m.styles.headerTitle.Render("▸ grove")
+	sep := m.styles.headerSep.Render("  ·  ")
+
 	metaParts := []string{
-		fmt.Sprintf("folders %d", len(m.cfg.Folders)),
-		fmt.Sprintf("sessions %d", m.totalManagedSessions()),
+		fmt.Sprintf("%d folders", len(m.cfg.Folders)),
+		fmt.Sprintf("%d sessions", m.totalManagedSessions()),
 	}
 	if m.filterQuery != "" {
 		metaParts = append(metaParts, "filter: "+m.filterQuery)
 	}
-	meta := m.styles.headerMeta.Render(strings.Join(metaParts, " | "))
-	return lipgloss.JoinVertical(lipgloss.Left, title, meta)
+	meta := m.styles.headerMeta.Render(strings.Join(metaParts, m.styles.headerSep.Render(" · ")))
+
+	return title + sep + meta
+}
+
+// ── Footer (merged help bar + status) ───────────────────────────────
+
+func (m Model) renderFooter() string {
+	// Prompt mode: show prompt input
+	if m.promptMode != promptNone {
+		label := m.styles.promptLabel.Render(m.promptTitle() + " ")
+		hint := m.styles.promptHint.Render("  enter confirm · esc cancel")
+		return label + m.prompt.View() + hint
+	}
+
+	// Kill confirmation mode
+	if m.confirmKillTarget != "" {
+		warn := m.styles.footerWarn.Render("kill " + m.confirmKillTarget + "?")
+		hint := m.styles.helpDesc.Render("  y confirm · n cancel")
+		return warn + hint
+	}
+
+	// Status message takes precedence
+	if m.errMsg != "" {
+		return m.styles.footerErr.Render("error: " + m.errMsg)
+	}
+	if m.statusMsg != "" {
+		return m.styles.footerOK.Render(m.statusMsg)
+	}
+
+	// Default: context-sensitive help bar
+	return m.renderHelpBar()
 }
 
 func (m Model) renderHelpBar() string {
-	if m.confirmKillTarget != "" {
-		return m.styles.helpBar.Render("confirm kill mode: y confirm | n or esc cancel")
+	type binding struct {
+		key  string
+		desc string
 	}
 
-	chips := []string{
-		m.styles.actionChipActive.Render("enter attach"),
-		m.styles.actionChip.Render("n new"),
-		m.styles.actionChip.Render("R rename"),
-		m.styles.actionChip.Render("K kill"),
-		m.styles.actionChip.Render("c command"),
-		m.styles.actionChip.Render("/ filter"),
-		m.styles.actionChip.Render("pgup/pgdn details"),
-		m.styles.actionChip.Render("r refresh"),
-		m.styles.actionChip.Render("q quit"),
+	// Context-sensitive hint at the start
+	var bindings []binding
+	if _, ok := m.selectedSessionRow(); ok {
+		bindings = []binding{
+			{"⏎", "attach"},
+			{"n", "new"},
+			{"R", "rename"},
+			{"K", "kill"},
+			{"c", "cmd"},
+		}
+	} else {
+		bindings = []binding{
+			{"n", "new session"},
+			{"j/k", "navigate"},
+		}
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Left, chips...)
+	bindings = append(bindings, []binding{
+		{"/", "filter"},
+		{"r", "refresh"},
+		{"q", "quit"},
+	}...)
+
+	parts := make([]string, 0, len(bindings)*2)
+	sep := m.styles.helpSep.Render(" · ")
+	for i, b := range bindings {
+		parts = append(parts, m.styles.helpKey.Render(b.key)+" "+m.styles.helpDesc.Render(b.desc))
+		if i < len(bindings)-1 {
+			parts = append(parts, sep)
+		}
+	}
+
+	return strings.Join(parts, "")
 }
+
+// ── Tree Pane ───────────────────────────────────────────────────────
 
 func (m *Model) rebuildRows() {
 	rows := make([]treeRow, 0)
@@ -399,126 +552,196 @@ func (m *Model) rebuildRows() {
 	m.detailScroll = 0
 }
 
-func (m Model) renderRow(row treeRow) string {
-	if row.typeOf == rowFolder {
-		folder := m.cfg.Folders[row.folderIndex]
-		count := len(m.sessions[row.folderIndex])
-		return fmt.Sprintf("[folder] %s (%d)", folder.Name, count)
+func (m Model) isLastSessionInFolder(idx int) bool {
+	if idx < 0 || idx >= len(m.rows) || m.rows[idx].typeOf != rowSession {
+		return false
 	}
-
-	return fmt.Sprintf("  %s  [%s]  %d windows", row.leafName, row.status, row.windows)
+	if idx+1 >= len(m.rows) {
+		return true
+	}
+	return m.rows[idx+1].typeOf != rowSession
 }
 
-func (m Model) renderTreePane(maxLines int) string {
-	rows := make([]string, 0, len(m.rows))
-	maxWidth := 40
-	if m.width > 0 {
-		maxWidth = (m.width * 45 / 100) - 8
-		if maxWidth < 24 {
-			maxWidth = 24
-		}
+func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string {
+	if maxWidth < 10 {
+		maxWidth = 10
 	}
-	bodyHeight := maxLines - 1
+
+	bodyHeight := innerH - 1 // -1 for title
 	if bodyHeight < 3 {
 		bodyHeight = 3
 	}
+
+	// Empty state
+	if len(m.rows) == 0 {
+		body := m.renderEmptyTree()
+		title := m.styles.paneTitle.Render("Sessions")
+		padded := padToHeight(title+"\n"+body, innerH)
+		return m.styledPane(padded, paneWidth, dim)
+	}
+
+	rows := make([]string, 0, len(m.rows))
 	start, end := windowAround(m.selected, len(m.rows), bodyHeight)
+
 	for i := start; i < end; i++ {
 		row := m.rows[i]
-		raw := truncateRight(m.renderRow(row), maxWidth)
-		line := raw
-		if i == m.selected {
-			line = m.styles.rowSelected.Render(" " + raw + " ")
-		} else {
-			if row.typeOf == rowFolder {
-				line = "  " + m.styles.rowFolder.Render(raw)
+		isSelected := i == m.selected
+		isKillTarget := m.confirmKillTarget != "" && row.sessionName == m.confirmKillTarget
+
+		if row.typeOf == rowFolder {
+			folder := m.cfg.Folders[row.folderIndex]
+			count := len(m.sessions[row.folderIndex])
+			text := fmt.Sprintf("▸ %s (%d)", folder.Name, count)
+			text = truncateRight(text, maxWidth-2)
+
+			if isSelected {
+				rows = append(rows, m.selectedLine("▎"+text, maxWidth))
 			} else {
-				line = "  " + m.decorateSessionLine(raw, row.status)
+				rows = append(rows, " "+m.styles.rowFolder.Render(text))
+			}
+		} else {
+			isLast := m.isLastSessionInFolder(i)
+			connector := "├"
+			if isLast {
+				connector = "└"
+			}
+
+			dotChar := "○"
+			if row.status == "attached" {
+				dotChar = "●"
+			}
+
+			winStr := fmt.Sprintf("(%dw)", row.windows)
+			// Layout: [indent 2][connector 1][ 1][dot 1][ 1][name][ 1][winStr]
+			nameMax := maxWidth - 2 - 1 - 1 - 1 - 1 - 1 - len(winStr)
+			if nameMax < 6 {
+				nameMax = 6
+			}
+			name := truncateRight(row.leafName, nameMax)
+
+			if isSelected {
+				plain := "▎" + connector + " " + dotChar + " " + name + " " + winStr
+				rows = append(rows, m.selectedLine(plain, maxWidth))
+			} else if isKillTarget {
+				plain := "  " + connector + " " + dotChar + " " + name + " " + winStr
+				rows = append(rows, m.styles.rowKillTarget.Render(padRight(plain, maxWidth)))
+			} else {
+				dot := m.styles.statusDotDetached.Render(dotChar)
+				if row.status == "attached" {
+					dot = m.styles.statusDotAttached.Render(dotChar)
+				}
+				winCount := m.styles.windowCount.Render(winStr)
+				line := "  " + m.styles.helpSep.Render(connector) + " " + dot + " " + m.styles.rowSession.Render(name) + " " + winCount
+				rows = append(rows, line)
 			}
 		}
-		rows = append(rows, line)
 	}
 
 	body := strings.Join(rows, "\n")
-	if body == "" {
-		body = "no folders or sessions match current filter"
-	}
 	if start > 0 {
-		body = m.styles.headerMeta.Render(fmt.Sprintf("... %d above", start)) + "\n" + body
+		body = m.styles.headerMeta.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n" + body
 	}
 	if end < len(m.rows) {
-		if body != "" {
-			body += "\n"
-		}
-		body += m.styles.headerMeta.Render(fmt.Sprintf("... %d below", len(m.rows)-end))
+		body += "\n" + m.styles.headerMeta.Render(fmt.Sprintf("  ↓ %d more", len(m.rows)-end))
 	}
 
-	header := m.styles.paneTitle.Render("Sessions")
-	return m.styles.pane.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
+	title := m.styles.paneTitle.Render("Sessions")
+	padded := padToHeight(title+"\n"+body, innerH)
+	return m.styledPane(padded, paneWidth, dim)
 }
 
-func (m Model) renderDetailPane(maxLines int) string {
+func (m Model) renderEmptyTree() string {
+	if len(m.cfg.Folders) == 0 {
+		return m.styles.emptyTitle.Render("no folders configured") + "\n" +
+			m.styles.emptyHint.Render("edit ~/.config/grove/config.toml\nto add your project folders")
+	}
+	if m.filterQuery != "" {
+		return m.styles.emptyTitle.Render("no matches for filter") + "\n" +
+			m.styles.emptyHint.Render("press / to change filter")
+	}
+	return m.styles.emptyTitle.Render("no sessions yet") + "\n" +
+		m.styles.emptyHint.Render("press n to create a session")
+}
+
+// ── Detail Pane ─────────────────────────────────────────────────────
+
+func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) string {
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
+
 	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
-		header := m.styles.paneTitle.Render("Details")
-		return m.styles.pane.Render(lipgloss.JoinVertical(lipgloss.Left, header, "No selection"))
+		title := m.styles.paneTitle.Render("Details")
+		hint := m.styles.emptyHint.Render("select a folder or session")
+		padded := padToHeight(title+"\n\n"+hint, innerH)
+		return m.styledPane(padded, paneWidth, dim)
 	}
 
 	row := m.rows[m.selected]
+	var lines []string
+
 	if row.typeOf == rowFolder {
 		folder := m.cfg.Folders[row.folderIndex]
 		sessions := append([]tmux.Session(nil), m.sessions[row.folderIndex]...)
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 
-		lines := []string{
-			m.styles.paneTitle.Render("Details"),
-			m.kv("Type", "folder"),
-			m.kv("Name", folder.Name),
-			m.kv("Namespace", folder.Namespace),
-			m.kv("Path", truncateMiddle(folder.Path, 64)),
+		// Folder card
+		lines = []string{
+			m.styles.detailName.Render(folder.Name),
+			m.styles.detailMeta.Render(folder.Namespace + " · " + fmt.Sprintf("%d sessions", len(sessions))),
+			"",
+			m.kv("Path", truncateMiddle(folder.Path, maxWidth-6)),
 		}
 		if folder.DefaultCommand != "" {
-			lines = append(lines, m.kv("Default command", truncateRight(folder.DefaultCommand, 64)))
-		} else {
-			lines = append(lines, m.kv("Default command", "<none>"))
+			lines = append(lines, m.kv("Command", truncateRight(folder.DefaultCommand, maxWidth-10)))
 		}
-		lines = append(lines, m.kv("Managed sessions", fmt.Sprintf("%d", len(sessions))))
-		for _, s := range sessions {
-			state := "detached"
-			if s.Attached {
-				state = "attached"
+
+		if len(sessions) > 0 {
+			lines = append(lines, "", m.styles.infoLabel.Render("Sessions"))
+			for _, s := range sessions {
+				state := "detached"
+				dot := m.styles.statusDotDetached.Render("○")
+				if s.Attached {
+					state = "attached"
+					dot = m.styles.statusDotAttached.Render("●")
+				}
+				leaf := strings.TrimPrefix(s.Name, folder.Namespace+"/")
+				_ = state
+				lines = append(lines, dot+" "+m.styles.infoValue.Render(truncateRight(leaf, maxWidth-4)))
 			}
-			lines = append(lines, "- "+truncateRight(s.Name, 70)+" ("+state+")")
+		} else {
+			lines = append(lines, "", m.styles.emptyHint.Render("press n to create a session"))
 		}
+	} else {
+		folder := m.cfg.Folders[row.folderIndex]
 
-		return m.renderDetailLines(lines, maxLines)
+		// Session card
+		var statusLine string
+		if row.status == "attached" {
+			statusLine = m.styles.statusDotAttached.Render("●") + " " + m.styles.detailStatus.Render("attached")
+		} else {
+			statusLine = m.styles.statusDotDetached.Render("○") + " " + m.styles.detailMeta.Render("detached")
+		}
+		statusLine += m.styles.detailMeta.Render(fmt.Sprintf(" · %d windows", row.windows))
+
+		lines = []string{
+			m.styles.detailName.Render(row.leafName),
+			statusLine,
+			"",
+			m.kv("Full name", truncateRight(row.sessionName, maxWidth-12)),
+			m.kv("Folder", folder.Name),
+			m.kv("Path", truncateMiddle(folder.Path, maxWidth-6)),
+		}
 	}
 
-	folder := m.cfg.Folders[row.folderIndex]
-	lines := []string{
-		m.styles.paneTitle.Render("Details"),
-		m.kv("Type", "session"),
-		m.kv("Name", row.leafName),
-		m.kv("Full name", row.sessionName),
-		m.kv("Folder", folder.Name),
-		m.kv("Path", truncateMiddle(folder.Path, 64)),
-		m.kv("Status", row.status),
-		m.kv("Windows", fmt.Sprintf("%d", row.windows)),
-		"",
-		lipgloss.JoinHorizontal(lipgloss.Left,
-			m.styles.actionChipActive.Render("Enter attach"), " ",
-			m.styles.actionChip.Render("c command"), " ",
-			m.styles.actionChip.Render("R rename"), " ",
-			m.styles.actionChip.Render("K kill"),
-		),
-	}
-	return m.renderDetailLines(lines, maxLines)
+	return m.renderDetailLines(lines, innerH, paneWidth, dim)
 }
 
-func (m Model) renderDetailLines(lines []string, maxLines int) string {
+func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool) string {
 	if len(lines) == 0 {
-		return m.styles.pane.Render("")
+		return m.styledPane("", paneWidth, dim)
 	}
-	bodyHeight := maxLines
+	bodyHeight := innerH
 	if bodyHeight < 4 {
 		bodyHeight = 4
 	}
@@ -542,17 +765,17 @@ func (m Model) renderDetailLines(lines []string, maxLines int) string {
 
 	body := strings.Join(lines[start:end], "\n")
 	if start > 0 {
-		body = m.styles.headerMeta.Render(fmt.Sprintf("... %d above", start)) + "\n" + body
+		body = m.styles.headerMeta.Render(fmt.Sprintf("  ↑ %d above", start)) + "\n" + body
 	}
 	if end < len(lines) {
-		if body != "" {
-			body += "\n"
-		}
-		body += m.styles.headerMeta.Render(fmt.Sprintf("... %d below (pgdn)", len(lines)-end))
+		body += "\n" + m.styles.headerMeta.Render(fmt.Sprintf("  ↓ %d below", len(lines)-end))
 	}
 
-	return m.styles.pane.Render(body)
+	padded := padToHeight(body, innerH)
+	return m.styledPane(padded, paneWidth, dim)
 }
+
+// ── Commands ────────────────────────────────────────────────────────
 
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
@@ -614,9 +837,8 @@ func (m Model) updateKillConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.killSessionCmd(target)
 	case "n", "esc":
 		m.confirmKillTarget = ""
-		m.statusMsg = "kill cancelled"
-		m.errMsg = ""
-		return m, nil
+		clearCmd := m.setStatus("kill cancelled")
+		return m, clearCmd
 	default:
 		return m, nil
 	}
@@ -687,13 +909,13 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case promptFilter:
 				m.filterQuery = value
 				m.rebuildRows()
-				m.errMsg = ""
+				var clearCmd tea.Cmd
 				if value == "" {
-					m.statusMsg = "filter cleared"
+					clearCmd = m.setStatus("filter cleared")
 				} else {
-					m.statusMsg = "filter set: " + value
+					clearCmd = m.setStatus("filter set: " + value)
 				}
-				return m, nil
+				return m, clearCmd
 			}
 		}
 	}
@@ -706,17 +928,48 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) promptTitle() string {
 	switch m.promptMode {
 	case promptNewSession:
-		return "new session"
+		return "new session:"
 	case promptRenameSession:
-		return "rename session"
+		return "rename:"
 	case promptRunCommand:
-		return "run command"
+		return "command:"
 	case promptFilter:
-		return "set filter"
+		return "filter:"
 	default:
 		return ""
 	}
 }
+
+func (m Model) selectedLine(plain string, width int) string {
+	return m.styles.rowSelectedText.Width(width).Render(plain)
+}
+
+func (m Model) styledPane(content string, paneWidth int, dim bool) string {
+	// paneWidth is total outer width including border+padding.
+	// lipgloss Width includes padding but excludes border.
+	// border = 2 (left+right), so Width = paneWidth - 2.
+	// With Padding(0,1), the actual text area = Width - 2 = paneWidth - 4.
+	w := paneWidth - 2
+	if w < 1 {
+		w = 1
+	}
+	if dim {
+		return m.styles.paneDim.Width(w).Render(content)
+	}
+	return m.styles.pane.Width(w).Render(content)
+}
+
+func (m *Model) setStatus(msg string) tea.Cmd {
+	m.statusMsg = msg
+	m.errMsg = ""
+	m.statusSeq++
+	seq := m.statusSeq
+	return tea.Tick(statusClearDelay, func(time.Time) tea.Msg {
+		return clearStatusMsg{seq: seq}
+	})
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
 
 func containsAny(a, b, c, needle string) bool {
 	return strings.Contains(a, needle) || strings.Contains(b, needle) || strings.Contains(c, needle)
@@ -744,7 +997,7 @@ func (m Model) contentHeight() int {
 	if m.height <= 0 {
 		return 18
 	}
-	reserved := 10
+	reserved := 3 // header + blank + footer
 	h := m.height - reserved
 	if h < 8 {
 		h = 8
@@ -786,13 +1039,6 @@ func (m Model) kv(label, value string) string {
 	return m.styles.infoLabel.Render(label+": ") + m.styles.infoValue.Render(value)
 }
 
-func (m Model) decorateSessionLine(line, status string) string {
-	if status == "attached" {
-		return strings.Replace(line, "[attached]", "["+m.styles.statusAttached.Render("attached")+"]", 1)
-	}
-	return strings.Replace(line, "[detached]", "["+m.styles.statusDetached.Render("detached")+"]", 1)
-}
-
 func truncateRight(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -804,7 +1050,7 @@ func truncateRight(s string, max int) string {
 	if max <= 1 {
 		return string(r[:max])
 	}
-	return string(r[:max-1]) + "~"
+	return string(r[:max-1]) + "…"
 }
 
 func truncateMiddle(s string, max int) string {
@@ -820,7 +1066,25 @@ func truncateMiddle(s string, max int) string {
 	}
 	head := (max - 1) / 2
 	tail := max - 1 - head
-	return string(r[:head]) + "~" + string(r[len(r)-tail:])
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+}
+
+func padRight(s string, width int) string {
+	// Pad with spaces to fill width (approximate — ANSI-aware padding would be better
+	// but for our use this is sufficient since lipgloss handles final rendering)
+	sLen := lipgloss.Width(s)
+	if sLen >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-sLen)
+}
+
+func padToHeight(s string, height int) string {
+	lines := strings.Count(s, "\n") + 1
+	if lines >= height {
+		return s
+	}
+	return s + strings.Repeat("\n", height-lines)
 }
 
 func (m Model) defaultSessionLeaf(folder config.Folder) string {
