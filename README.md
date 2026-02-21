@@ -57,6 +57,7 @@ go run . -config /path/to/config.toml
 - `K` kill selected session
 - `c` send command to selected session
 - `/` set or clear a filter
+- `PgUp`/`PgDn` scroll details pane when content is long
 - `r` manual refresh
 - `q` quit
 - `y` confirm kill (when prompted)

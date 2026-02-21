@@ -58,6 +58,7 @@ type Model struct {
 
 	filterQuery       string
 	confirmKillTarget string
+	detailScroll      int
 
 	prompt     textinput.Model
 	promptMode promptMode
@@ -89,7 +90,7 @@ func defaultStyles() styleSet {
 		headerTitle:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")),
 		headerMeta:       lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
 		helpBar:          lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
-		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1),
+		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(1, 2),
 		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
 		rowFolder:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("225")),
 		rowSession:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
@@ -102,8 +103,8 @@ func defaultStyles() styleSet {
 		footerErr:        lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true),
 		footerPrompt:     lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true),
 		footerWarn:       lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
-		actionChip:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("236")).Padding(0, 1),
-		actionChipActive: lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("33")).Padding(0, 1).Bold(true),
+		actionChip:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("236")).Padding(0, 2),
+		actionChipActive: lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("33")).Padding(0, 2).Bold(true),
 	}
 }
 
@@ -162,20 +163,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "up", "k":
-			if m.selected > 0 {
-				m.selected--
-			}
+			m.setSelected(m.selected - 1)
 			return m, nil
 		case "down", "j":
-			if m.selected < len(m.rows)-1 {
-				m.selected++
-			}
+			m.setSelected(m.selected + 1)
 			return m, nil
 		case "r":
 			return m, m.loadSessionsCmd()
 		case "/":
 			m.openPrompt(promptFilter, m.filterQuery, "filter folders and sessions")
 			return m, textinput.Blink
+		case "pgdown", "ctrl+f":
+			m.detailScroll += m.contentHeight() / 2
+			return m, nil
+		case "pgup", "ctrl+b":
+			m.detailScroll -= m.contentHeight() / 2
+			if m.detailScroll < 0 {
+				m.detailScroll = 0
+			}
+			return m, nil
 		case "n":
 			folder, ok := m.selectedFolder()
 			if !ok {
@@ -269,8 +275,9 @@ func (m Model) View() string {
 	header := m.renderHeader()
 	help := m.renderHelpBar()
 
-	left := m.renderTreePane()
-	right := m.renderDetailPane()
+	maxPaneLines := m.contentHeight()
+	left := m.renderTreePane(maxPaneLines)
+	right := m.renderDetailPane(maxPaneLines)
 
 	content := ""
 	if m.width > 70 {
@@ -335,6 +342,7 @@ func (m Model) renderHelpBar() string {
 		m.styles.actionChip.Render("K kill"),
 		m.styles.actionChip.Render("c command"),
 		m.styles.actionChip.Render("/ filter"),
+		m.styles.actionChip.Render("pgup/pgdn details"),
 		m.styles.actionChip.Render("r refresh"),
 		m.styles.actionChip.Render("q quit"),
 	}
@@ -388,6 +396,7 @@ func (m *Model) rebuildRows() {
 	if m.selected < 0 {
 		m.selected = 0
 	}
+	m.detailScroll = 0
 }
 
 func (m Model) renderRow(row treeRow) string {
@@ -400,7 +409,7 @@ func (m Model) renderRow(row treeRow) string {
 	return fmt.Sprintf("  %s  [%s]  %d windows", row.leafName, row.status, row.windows)
 }
 
-func (m Model) renderTreePane() string {
+func (m Model) renderTreePane(maxLines int) string {
 	rows := make([]string, 0, len(m.rows))
 	maxWidth := 40
 	if m.width > 0 {
@@ -409,7 +418,13 @@ func (m Model) renderTreePane() string {
 			maxWidth = 24
 		}
 	}
-	for i, row := range m.rows {
+	bodyHeight := maxLines - 1
+	if bodyHeight < 3 {
+		bodyHeight = 3
+	}
+	start, end := windowAround(m.selected, len(m.rows), bodyHeight)
+	for i := start; i < end; i++ {
+		row := m.rows[i]
 		raw := truncateRight(m.renderRow(row), maxWidth)
 		line := raw
 		if i == m.selected {
@@ -428,12 +443,21 @@ func (m Model) renderTreePane() string {
 	if body == "" {
 		body = "no folders or sessions match current filter"
 	}
+	if start > 0 {
+		body = m.styles.headerMeta.Render(fmt.Sprintf("... %d above", start)) + "\n" + body
+	}
+	if end < len(m.rows) {
+		if body != "" {
+			body += "\n"
+		}
+		body += m.styles.headerMeta.Render(fmt.Sprintf("... %d below", len(m.rows)-end))
+	}
 
 	header := m.styles.paneTitle.Render("Sessions")
 	return m.styles.pane.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
 }
 
-func (m Model) renderDetailPane() string {
+func (m Model) renderDetailPane(maxLines int) string {
 	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
 		header := m.styles.paneTitle.Render("Details")
 		return m.styles.pane.Render(lipgloss.JoinVertical(lipgloss.Left, header, "No selection"))
@@ -466,7 +490,7 @@ func (m Model) renderDetailPane() string {
 			lines = append(lines, "- "+truncateRight(s.Name, 70)+" ("+state+")")
 		}
 
-		return m.styles.pane.Render(strings.Join(lines, "\n"))
+		return m.renderDetailLines(lines, maxLines)
 	}
 
 	folder := m.cfg.Folders[row.folderIndex]
@@ -487,7 +511,47 @@ func (m Model) renderDetailPane() string {
 			m.styles.actionChip.Render("K kill"),
 		),
 	}
-	return m.styles.pane.Render(strings.Join(lines, "\n"))
+	return m.renderDetailLines(lines, maxLines)
+}
+
+func (m Model) renderDetailLines(lines []string, maxLines int) string {
+	if len(lines) == 0 {
+		return m.styles.pane.Render("")
+	}
+	bodyHeight := maxLines
+	if bodyHeight < 4 {
+		bodyHeight = 4
+	}
+	scroll := m.detailScroll
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll >= len(lines) {
+		scroll = len(lines) - 1
+	}
+
+	start := scroll
+	end := start + bodyHeight
+	if end > len(lines) {
+		end = len(lines)
+		start = end - bodyHeight
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	body := strings.Join(lines[start:end], "\n")
+	if start > 0 {
+		body = m.styles.headerMeta.Render(fmt.Sprintf("... %d above", start)) + "\n" + body
+	}
+	if end < len(lines) {
+		if body != "" {
+			body += "\n"
+		}
+		body += m.styles.headerMeta.Render(fmt.Sprintf("... %d below (pgdn)", len(lines)-end))
+	}
+
+	return m.styles.pane.Render(body)
 }
 
 func (m Model) loadSessionsCmd() tea.Cmd {
@@ -656,6 +720,58 @@ func (m Model) promptTitle() string {
 
 func containsAny(a, b, c, needle string) bool {
 	return strings.Contains(a, needle) || strings.Contains(b, needle) || strings.Contains(c, needle)
+}
+
+func (m *Model) setSelected(next int) {
+	if len(m.rows) == 0 {
+		m.selected = 0
+		m.detailScroll = 0
+		return
+	}
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(m.rows) {
+		next = len(m.rows) - 1
+	}
+	if next != m.selected {
+		m.detailScroll = 0
+	}
+	m.selected = next
+}
+
+func (m Model) contentHeight() int {
+	if m.height <= 0 {
+		return 18
+	}
+	reserved := 10
+	h := m.height - reserved
+	if h < 8 {
+		h = 8
+	}
+	return h
+}
+
+func windowAround(selected, total, maxItems int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if maxItems <= 0 || maxItems >= total {
+		return 0, total
+	}
+	start := selected - maxItems/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxItems
+	if end > total {
+		end = total
+		start = end - maxItems
+		if start < 0 {
+			start = 0
+		}
+	}
+	return start, end
 }
 
 func (m Model) totalManagedSessions() int {
