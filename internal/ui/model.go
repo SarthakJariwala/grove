@@ -45,6 +45,7 @@ const (
 type Model struct {
 	cfg    config.Config
 	client *tmux.Client
+	styles styleSet
 
 	width  int
 	height int
@@ -60,6 +61,50 @@ type Model struct {
 
 	prompt     textinput.Model
 	promptMode promptMode
+}
+
+type styleSet struct {
+	headerTitle      lipgloss.Style
+	headerMeta       lipgloss.Style
+	helpBar          lipgloss.Style
+	pane             lipgloss.Style
+	paneTitle        lipgloss.Style
+	rowFolder        lipgloss.Style
+	rowSession       lipgloss.Style
+	rowSelected      lipgloss.Style
+	statusAttached   lipgloss.Style
+	statusDetached   lipgloss.Style
+	infoLabel        lipgloss.Style
+	infoValue        lipgloss.Style
+	footerOK         lipgloss.Style
+	footerErr        lipgloss.Style
+	footerPrompt     lipgloss.Style
+	footerWarn       lipgloss.Style
+	actionChip       lipgloss.Style
+	actionChipActive lipgloss.Style
+}
+
+func defaultStyles() styleSet {
+	return styleSet{
+		headerTitle:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")),
+		headerMeta:       lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		helpBar:          lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
+		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1),
+		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
+		rowFolder:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("225")),
+		rowSession:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		rowSelected:      lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Bold(true),
+		statusAttached:   lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true),
+		statusDetached:   lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
+		infoLabel:        lipgloss.NewStyle().Foreground(lipgloss.Color("109")),
+		infoValue:        lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		footerOK:         lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true),
+		footerErr:        lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true),
+		footerPrompt:     lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true),
+		footerWarn:       lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
+		actionChip:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("236")).Padding(0, 1),
+		actionChipActive: lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("33")).Padding(0, 1).Bold(true),
+	}
 }
 
 type sessionsLoadedMsg struct {
@@ -85,6 +130,7 @@ func NewModel(cfg config.Config, client *tmux.Client) Model {
 	m := Model{
 		cfg:    cfg,
 		client: client,
+		styles: defaultStyles(),
 
 		sessions: map[int][]tmux.Session{},
 		prompt:   t,
@@ -220,14 +266,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	title := lipgloss.NewStyle().Bold(true).Render("grove - managed tmux sessions")
-	help := "up/k down/j navigate | Enter attach | n new | R rename | K kill | c command | / filter | r refresh | q quit"
-	if m.confirmKillTarget != "" {
-		help = "confirm kill: y yes | n/esc cancel"
-	}
-	if m.filterQuery != "" {
-		title += lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("  [filter: " + m.filterQuery + "]")
-	}
+	header := m.renderHeader()
+	help := m.renderHelpBar()
 
 	left := m.renderTreePane()
 	right := m.renderDetailPane()
@@ -251,19 +291,55 @@ func (m Model) View() string {
 
 	status := ""
 	if m.errMsg != "" {
-		status = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + m.errMsg)
+		status = m.styles.footerErr.Render("error: " + m.errMsg)
 	} else if m.statusMsg != "" {
-		status = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(m.statusMsg)
+		status = m.styles.footerOK.Render(m.statusMsg)
 	}
 
 	if m.promptMode != promptNone {
 		promptTitle := m.promptTitle()
-		status = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render(promptTitle + ": " + m.prompt.View() + " (Enter submit, Esc cancel)")
+		status = m.styles.footerPrompt.Render(promptTitle + ": " + m.prompt.View() + " (Enter submit, Esc cancel)")
 	} else if m.confirmKillTarget != "" {
-		status = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("kill session " + m.confirmKillTarget + "? press y to confirm, n to cancel")
+		status = m.styles.footerWarn.Render("kill session " + m.confirmKillTarget + "? press y to confirm, n to cancel")
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, title, help, "", content, "", status)
+	if status == "" {
+		status = m.styles.headerMeta.Render("ready")
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, help, "", content, "", status)
+}
+
+func (m Model) renderHeader() string {
+	title := m.styles.headerTitle.Render("grove")
+	metaParts := []string{
+		fmt.Sprintf("folders %d", len(m.cfg.Folders)),
+		fmt.Sprintf("sessions %d", m.totalManagedSessions()),
+	}
+	if m.filterQuery != "" {
+		metaParts = append(metaParts, "filter: "+m.filterQuery)
+	}
+	meta := m.styles.headerMeta.Render(strings.Join(metaParts, " | "))
+	return lipgloss.JoinVertical(lipgloss.Left, title, meta)
+}
+
+func (m Model) renderHelpBar() string {
+	if m.confirmKillTarget != "" {
+		return m.styles.helpBar.Render("confirm kill mode: y confirm | n or esc cancel")
+	}
+
+	chips := []string{
+		m.styles.actionChipActive.Render("enter attach"),
+		m.styles.actionChip.Render("n new"),
+		m.styles.actionChip.Render("R rename"),
+		m.styles.actionChip.Render("K kill"),
+		m.styles.actionChip.Render("c command"),
+		m.styles.actionChip.Render("/ filter"),
+		m.styles.actionChip.Render("r refresh"),
+		m.styles.actionChip.Render("q quit"),
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Left, chips...)
 }
 
 func (m *Model) rebuildRows() {
@@ -318,20 +394,32 @@ func (m Model) renderRow(row treeRow) string {
 	if row.typeOf == rowFolder {
 		folder := m.cfg.Folders[row.folderIndex]
 		count := len(m.sessions[row.folderIndex])
-		return fmt.Sprintf("[folder] %s [%d]", folder.Name, count)
+		return fmt.Sprintf("[folder] %s (%d)", folder.Name, count)
 	}
 
-	return fmt.Sprintf("  - %s (%s, %d windows)", row.leafName, row.status, row.windows)
+	return fmt.Sprintf("  %s  [%s]  %d windows", row.leafName, row.status, row.windows)
 }
 
 func (m Model) renderTreePane() string {
 	rows := make([]string, 0, len(m.rows))
+	maxWidth := 40
+	if m.width > 0 {
+		maxWidth = (m.width * 45 / 100) - 8
+		if maxWidth < 24 {
+			maxWidth = 24
+		}
+	}
 	for i, row := range m.rows {
-		line := m.renderRow(row)
+		raw := truncateRight(m.renderRow(row), maxWidth)
+		line := raw
 		if i == m.selected {
-			line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render("> " + line)
+			line = m.styles.rowSelected.Render(" " + raw + " ")
 		} else {
-			line = "  " + line
+			if row.typeOf == rowFolder {
+				line = "  " + m.styles.rowFolder.Render(raw)
+			} else {
+				line = "  " + m.decorateSessionLine(raw, row.status)
+			}
 		}
 		rows = append(rows, line)
 	}
@@ -341,12 +429,14 @@ func (m Model) renderTreePane() string {
 		body = "no folders or sessions match current filter"
 	}
 
-	return lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1).Render("Tree\n" + body)
+	header := m.styles.paneTitle.Render("Sessions")
+	return m.styles.pane.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
 }
 
 func (m Model) renderDetailPane() string {
 	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
-		return lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1).Render("Details\nNo selection")
+		header := m.styles.paneTitle.Render("Details")
+		return m.styles.pane.Render(lipgloss.JoinVertical(lipgloss.Left, header, "No selection"))
 	}
 
 	row := m.rows[m.selected]
@@ -356,42 +446,48 @@ func (m Model) renderDetailPane() string {
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 
 		lines := []string{
-			"Details",
-			"Type: folder",
-			"Name: " + folder.Name,
-			"Namespace: " + folder.Namespace,
-			"Path: " + folder.Path,
+			m.styles.paneTitle.Render("Details"),
+			m.kv("Type", "folder"),
+			m.kv("Name", folder.Name),
+			m.kv("Namespace", folder.Namespace),
+			m.kv("Path", truncateMiddle(folder.Path, 64)),
 		}
 		if folder.DefaultCommand != "" {
-			lines = append(lines, "Default command: "+folder.DefaultCommand)
+			lines = append(lines, m.kv("Default command", truncateRight(folder.DefaultCommand, 64)))
 		} else {
-			lines = append(lines, "Default command: <none>")
+			lines = append(lines, m.kv("Default command", "<none>"))
 		}
-		lines = append(lines, fmt.Sprintf("Managed sessions: %d", len(sessions)))
+		lines = append(lines, m.kv("Managed sessions", fmt.Sprintf("%d", len(sessions))))
 		for _, s := range sessions {
 			state := "detached"
 			if s.Attached {
 				state = "attached"
 			}
-			lines = append(lines, "- "+s.Name+" ("+state+")")
+			lines = append(lines, "- "+truncateRight(s.Name, 70)+" ("+state+")")
 		}
 
-		return lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1).Render(strings.Join(lines, "\n"))
+		return m.styles.pane.Render(strings.Join(lines, "\n"))
 	}
 
 	folder := m.cfg.Folders[row.folderIndex]
 	lines := []string{
-		"Details",
-		"Type: session",
-		"Name: " + row.leafName,
-		"Full name: " + row.sessionName,
-		"Folder: " + folder.Name,
-		"Path: " + folder.Path,
-		"Status: " + row.status,
-		fmt.Sprintf("Windows: %d", row.windows),
-		"Actions: Enter attach, c run command, R rename, K kill",
+		m.styles.paneTitle.Render("Details"),
+		m.kv("Type", "session"),
+		m.kv("Name", row.leafName),
+		m.kv("Full name", row.sessionName),
+		m.kv("Folder", folder.Name),
+		m.kv("Path", truncateMiddle(folder.Path, 64)),
+		m.kv("Status", row.status),
+		m.kv("Windows", fmt.Sprintf("%d", row.windows)),
+		"",
+		lipgloss.JoinHorizontal(lipgloss.Left,
+			m.styles.actionChipActive.Render("Enter attach"), " ",
+			m.styles.actionChip.Render("c command"), " ",
+			m.styles.actionChip.Render("R rename"), " ",
+			m.styles.actionChip.Render("K kill"),
+		),
 	}
-	return lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	return m.styles.pane.Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) loadSessionsCmd() tea.Cmd {
@@ -525,18 +621,18 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.sendCommandCmd(row.sessionName, value)
 			case promptFilter:
-					m.filterQuery = value
-					m.rebuildRows()
-					m.errMsg = ""
-					if value == "" {
-						m.statusMsg = "filter cleared"
-					} else {
-						m.statusMsg = "filter set: " + value
-					}
-					return m, nil
+				m.filterQuery = value
+				m.rebuildRows()
+				m.errMsg = ""
+				if value == "" {
+					m.statusMsg = "filter cleared"
+				} else {
+					m.statusMsg = "filter set: " + value
 				}
+				return m, nil
 			}
 		}
+	}
 
 	var cmd tea.Cmd
 	m.prompt, cmd = m.prompt.Update(msg)
@@ -560,6 +656,55 @@ func (m Model) promptTitle() string {
 
 func containsAny(a, b, c, needle string) bool {
 	return strings.Contains(a, needle) || strings.Contains(b, needle) || strings.Contains(c, needle)
+}
+
+func (m Model) totalManagedSessions() int {
+	total := 0
+	for _, sessions := range m.sessions {
+		total += len(sessions)
+	}
+	return total
+}
+
+func (m Model) kv(label, value string) string {
+	return m.styles.infoLabel.Render(label+": ") + m.styles.infoValue.Render(value)
+}
+
+func (m Model) decorateSessionLine(line, status string) string {
+	if status == "attached" {
+		return strings.Replace(line, "[attached]", "["+m.styles.statusAttached.Render("attached")+"]", 1)
+	}
+	return strings.Replace(line, "[detached]", "["+m.styles.statusDetached.Render("detached")+"]", 1)
+}
+
+func truncateRight(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 1 {
+		return string(r[:max])
+	}
+	return string(r[:max-1]) + "~"
+}
+
+func truncateMiddle(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 3 {
+		return truncateRight(s, max)
+	}
+	head := (max - 1) / 2
+	tail := max - 1 - head
+	return string(r[:head]) + "~" + string(r[len(r)-tail:])
 }
 
 func (m Model) defaultSessionLeaf(folder config.Folder) string {
