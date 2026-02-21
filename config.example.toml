@@ -1,0 +1,9 @@
+[[folder]]
+name = "Main API"
+path = "/Users/you/dev/main-api"
+default_command = "bin/dev"
+
+[[folder]]
+name = "Website"
+path = "/Users/you/dev/website"
+# default_command = "pnpm dev"
