@@ -37,7 +37,7 @@ func main() {
 	}
 
 	client := tmux.NewClient()
-	model := ui.NewModel(cfg, client)
+	model := ui.NewModel(cfg, *configPath, client)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

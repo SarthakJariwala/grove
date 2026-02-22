@@ -62,7 +62,7 @@ func (c *Config) normalize(baseDir string) error {
 		}
 		folder.Path = absPath
 
-		namespace := slug(folder.Name)
+		namespace := Slug(folder.Name)
 		if namespace == "" {
 			return fmt.Errorf("folder %q produced empty namespace", folder.Name)
 		}
@@ -76,7 +76,7 @@ func (c *Config) normalize(baseDir string) error {
 	return nil
 }
 
-func slug(s string) string {
+func Slug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder
 	lastDash := false
@@ -96,6 +96,24 @@ func slug(s string) string {
 
 	out := strings.Trim(b.String(), "-")
 	return out
+}
+
+func AppendFolder(path string, f Folder) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open config for append: %w", err)
+	}
+	defer file.Close()
+
+	block := fmt.Sprintf("\n[[folder]]\nname = %q\npath = %q\n", f.Name, f.Path)
+	if f.DefaultCommand != "" {
+		block += fmt.Sprintf("default_command = %q\n", f.DefaultCommand)
+	}
+
+	if _, err := file.WriteString(block); err != nil {
+		return fmt.Errorf("write folder block: %w", err)
+	}
+	return nil
 }
 
 func EnsureTemplate(path string) error {

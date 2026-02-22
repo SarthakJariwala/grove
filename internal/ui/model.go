@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +50,7 @@ const (
 	promptRenameSession
 	promptRunCommand
 	promptFilter
+	promptAddFolder
 )
 
 // ── Color palette (forest/grove theme) ──────────────────────────────
@@ -69,9 +72,10 @@ const (
 )
 
 type Model struct {
-	cfg    config.Config
-	client *tmux.Client
-	styles styleSet
+	cfg     config.Config
+	cfgPath string
+	client  *tmux.Client
+	styles  styleSet
 
 	width  int
 	height int
@@ -87,8 +91,10 @@ type Model struct {
 	confirmKillTarget string
 	detailScroll      int
 
-	prompt     textinput.Model
-	promptMode promptMode
+	prompt        textinput.Model
+	promptMode    promptMode
+	promptStep    int
+	pendingFolder config.Folder
 }
 
 type styleSet struct {
@@ -214,15 +220,21 @@ type clearStatusMsg struct {
 	seq int
 }
 
-func NewModel(cfg config.Config, client *tmux.Client) Model {
+type folderAddedMsg struct {
+	folder config.Folder
+	err    error
+}
+
+func NewModel(cfg config.Config, cfgPath string, client *tmux.Client) Model {
 	t := textinput.New()
 	t.CharLimit = 512
 	t.Prompt = ""
 
 	m := Model{
-		cfg:    cfg,
-		client: client,
-		styles: defaultStyles(),
+		cfg:     cfg,
+		cfgPath: cfgPath,
+		client:  client,
+		styles:  defaultStyles(),
 
 		sessions: map[int][]tmux.Session{},
 		prompt:   t,
@@ -307,6 +319,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = ""
 			m.errMsg = ""
 			return m, nil
+		case "A":
+			m.promptStep = 0
+			m.pendingFolder = config.Folder{}
+			m.openPrompt(promptAddFolder, "", "folder name")
+			return m, textinput.Blink
 		case "enter":
 			row, ok := m.selectedSessionRow()
 			if !ok {
@@ -352,6 +369,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadSessionsCmd()
 		}
 		clearCmd := m.setStatus("detached from session")
+		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
+
+	case folderAddedMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.cfg.Folders = append(m.cfg.Folders, msg.folder)
+		m.rebuildRows()
+		clearCmd := m.setStatus("added folder: " + msg.folder.Name)
 		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
 
 	case clearStatusMsg:
@@ -448,7 +475,11 @@ func (m Model) renderFooter() string {
 	// Prompt mode: show prompt input
 	if m.promptMode != promptNone {
 		label := m.styles.promptLabel.Render(m.promptTitle() + " ")
-		hint := m.styles.promptHint.Render("  enter confirm · esc cancel")
+		enterHint := "enter confirm"
+		if m.promptMode == promptAddFolder && m.promptStep < 2 {
+			enterHint = "enter next"
+		}
+		hint := m.styles.promptHint.Render("  " + enterHint + " · esc cancel")
 		return label + m.prompt.View() + hint
 	}
 
@@ -486,10 +517,12 @@ func (m Model) renderHelpBar() string {
 			{"R", "rename"},
 			{"K", "kill"},
 			{"c", "cmd"},
+			{"A", "add folder"},
 		}
 	} else {
 		bindings = []binding{
 			{"n", "new session"},
+			{"A", "add folder"},
 			{"j/k", "navigate"},
 		}
 	}
@@ -1029,6 +1062,59 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, m.sendCommandCmd(row.sessionName, value)
+			case promptAddFolder:
+				switch m.promptStep {
+				case 0:
+					if value == "" {
+						m.errMsg = "folder name is required"
+						return m, nil
+					}
+					ns := config.Slug(value)
+					if ns == "" {
+						m.errMsg = "folder name produced empty namespace"
+						return m, nil
+					}
+					for _, f := range m.cfg.Folders {
+						if f.Namespace == ns {
+							m.errMsg = fmt.Sprintf("namespace %q already exists", ns)
+							return m, nil
+						}
+					}
+					m.pendingFolder.Name = value
+					m.pendingFolder.Namespace = ns
+					m.promptStep = 1
+					m.promptMode = promptAddFolder
+					m.openPrompt(promptAddFolder, "", "folder path")
+					return m, textinput.Blink
+				case 1:
+					if value == "" {
+						m.errMsg = "folder path is required"
+						return m, nil
+					}
+					value = expandHome(value)
+					absPath, err := filepath.Abs(value)
+					if err != nil {
+						m.errMsg = fmt.Sprintf("invalid path: %v", err)
+						return m, nil
+					}
+					info, err := os.Stat(absPath)
+					if err != nil {
+						m.errMsg = fmt.Sprintf("path not found: %v", err)
+						return m, nil
+					}
+					if !info.IsDir() {
+						m.errMsg = "path is not a directory"
+						return m, nil
+					}
+					m.pendingFolder.Path = absPath
+					m.promptStep = 2
+					m.promptMode = promptAddFolder
+					m.openPrompt(promptAddFolder, "", "default command (optional)")
+					return m, textinput.Blink
+				case 2:
+					m.pendingFolder.DefaultCommand = value
+					return m, m.addFolderCmd(m.pendingFolder)
+				}
 			case promptFilter:
 				m.filterQuery = value
 				m.rebuildRows()
@@ -1058,6 +1144,8 @@ func (m Model) promptTitle() string {
 		return "command:"
 	case promptFilter:
 		return "filter:"
+	case promptAddFolder:
+		return fmt.Sprintf("add folder (%d/3):", m.promptStep+1)
 	default:
 		return ""
 	}
@@ -1304,6 +1392,16 @@ func sanitizeLeaf(in string) string {
 	return out
 }
 
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
 func (m Model) newSessionCmd(folder config.Folder, leaf string) tea.Cmd {
 	leaf = sanitizeLeaf(leaf)
 	fullName := folder.Namespace + "/" + leaf
@@ -1336,6 +1434,16 @@ func (m Model) killSessionCmd(name string) tea.Cmd {
 			return actionResultMsg{err: err}
 		}
 		return actionResultMsg{status: "killed " + name}
+	}
+}
+
+func (m Model) addFolderCmd(f config.Folder) tea.Cmd {
+	cfgPath := m.cfgPath
+	return func() tea.Msg {
+		if err := config.AppendFolder(cfgPath, f); err != nil {
+			return folderAddedMsg{err: err}
+		}
+		return folderAddedMsg{folder: f}
 	}
 }
 
