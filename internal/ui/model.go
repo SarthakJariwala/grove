@@ -833,19 +833,19 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 		statusLine += m.styles.detailMeta.Render(fmt.Sprintf(" · %d windows", row.windows))
 
 		lines = []string{
-			m.styles.detailName.Render(row.leafName),
+			m.styles.detailName.Render(truncateRight(row.leafName, maxWidth)),
 			statusLine,
 			"",
 			m.kv("Full name", truncateRight(row.sessionName, maxWidth-12)),
-			m.kv("Folder", folder.Name),
+			m.kv("Folder", truncateRight(folder.Name, maxWidth-9)),
 			m.kv("Path", truncateMiddle(folder.Path, maxWidth-6)),
 		}
 
 		if row.currentCommand != "" {
-			lines = append(lines, m.kv("Running", row.currentCommand))
+			lines = append(lines, m.kv("Running", truncateRight(row.currentCommand, maxWidth-10)))
 		}
 		if title := paneDisplayTitle(row); title != "" {
-			lines = append(lines, m.kv("Title", title))
+			lines = append(lines, m.kv("Title", truncateRight(title, maxWidth-8)))
 		}
 		if row.lastActivity > 0 {
 			d := time.Since(time.Unix(row.lastActivity, 0))
