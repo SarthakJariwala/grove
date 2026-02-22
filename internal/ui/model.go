@@ -265,6 +265,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "esc":
+			if m.filterQuery != "" {
+				m.filterQuery = ""
+				m.rebuildRows()
+				clearCmd := m.setStatus("filter cleared")
+				return m, clearCmd
+			}
+			return m, nil
 		case "up", "k":
 			m.setSelected(m.selected - 1)
 			return m, nil
@@ -527,6 +535,9 @@ func (m Model) renderHelpBar() string {
 		}
 	}
 
+	if m.filterQuery != "" {
+		bindings = append(bindings, binding{"esc", "clear filter"})
+	}
 	bindings = append(bindings, []binding{
 		{"/", "filter"},
 		{"r", "refresh"},
