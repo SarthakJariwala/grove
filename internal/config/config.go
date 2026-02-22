@@ -34,10 +34,6 @@ func Load(path string) (Config, error) {
 }
 
 func (c *Config) normalize(baseDir string) error {
-	if len(c.Folders) == 0 {
-		return fmt.Errorf("config must contain at least one [[folder]]")
-	}
-
 	seen := map[string]struct{}{}
 	for i := range c.Folders {
 		folder := &c.Folders[i]

@@ -735,7 +735,7 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 func (m Model) renderEmptyTree() string {
 	if len(m.cfg.Folders) == 0 {
 		return m.styles.emptyTitle.Render("no folders configured") + "\n" +
-			m.styles.emptyHint.Render("edit ~/.config/grove/config.toml\nto add your project folders")
+			m.styles.emptyHint.Render("press A to add a folder")
 	}
 	if m.filterQuery != "" {
 		return m.styles.emptyTitle.Render("no matches for filter") + "\n" +
