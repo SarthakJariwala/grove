@@ -12,8 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"grove/internal/config"
-	"grove/internal/tmux"
+	"github.com/SarthakJariwala/grove/internal/config"
+	"github.com/SarthakJariwala/grove/internal/tmux"
 )
 
 const refreshInterval = 2 * time.Second

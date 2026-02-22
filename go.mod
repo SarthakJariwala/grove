@@ -1,4 +1,4 @@
-module grove
+module github.com/SarthakJariwala/grove
 
 go 1.23
 

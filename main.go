@@ -8,9 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"grove/internal/config"
-	"grove/internal/tmux"
-	"grove/internal/ui"
+	"github.com/SarthakJariwala/grove/internal/config"
+	"github.com/SarthakJariwala/grove/internal/tmux"
+	"github.com/SarthakJariwala/grove/internal/ui"
 )
 
 func defaultConfigPath() string {
