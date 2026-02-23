@@ -925,6 +925,10 @@ func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool
 
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
+		if len(m.cfg.Folders) == 0 {
+			return sessionsLoadedMsg{sessions: map[int][]tmux.Session{}}
+		}
+
 		sessions, err := m.client.ListSessions()
 		if err != nil {
 			return sessionsLoadedMsg{err: err}
