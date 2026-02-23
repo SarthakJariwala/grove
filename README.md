@@ -1,6 +1,6 @@
 # grove
 
-A terminal UI for managing tmux sessions, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A terminal UI for managing agent sessions, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 Grove lets you organize tmux sessions under named folders defined in a simple TOML config. Create, attach, rename, kill, and send commands to sessions — all from a two-pane TUI with a tree view and details panel.
 
