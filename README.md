@@ -1,32 +1,36 @@
 # grove
 
-`grove` is a terminal UI for managing tmux sessions grouped under configured folders.
+A terminal UI for managing agent sessions, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+
+Grove lets you organize tmux sessions under named folders defined in a simple TOML config. Create, attach, rename, kill, and send commands to sessions — all from a two-pane TUI with a tree view and details panel.
 
 ## Features
 
-- Read folder config from TOML.
-- Show configured folders and matching managed sessions (`<folder-namespace>/<session-name>`).
-- Create new sessions and immediately attach.
-- Optionally run a folder default command automatically in the new session.
-- Attach to a session with full tmux terminal experience and return to the TUI on detach.
-- Rename, kill, and send commands to sessions.
-- Left tree pane and right details pane for the current selection.
-- Filter folders/sessions from the keyboard.
-- Poll tmux every 2 seconds to keep status fresh.
+- Organize tmux sessions under named folders with slug-based namespaces
+- Two-pane layout: tree view (left) + session details (right)
+- Create new sessions that auto-attach, with optional default commands
+- Attach to existing sessions and return to the TUI on detach
+- Rename, kill, and send commands to sessions
+- Keyboard-driven filter to quickly find folders and sessions
+- Auto-refreshes tmux state every 2 seconds
+- Auto-scaffolds a config template on first run
+
+## Requirements
+
+- [Go](https://go.dev/) 1.23+
+- [tmux](https://github.com/tmux/tmux) in your `PATH`
 
 ## Install
 
 ```bash
-go build ./...
+go install github.com/SarthakJariwala/grove@latest
 ```
 
-## Config
+## Configuration
 
-By default the app reads `~/.config/grove/config.toml`.
+Grove reads its config from `~/.config/grove/config.toml` by default. On first run, it creates a template config if none exists. Use `-config` to specify a custom path.
 
-If the file does not exist, grove creates a template at startup.
-
-Example:
+Each `[[folder]]` entry defines a project folder with a name, path, and optional default command to run when creating new sessions:
 
 ```toml
 [[folder]]
@@ -39,32 +43,57 @@ name = "Website"
 path = "/Users/you/dev/website"
 ```
 
-## Run
+| Field             | Required | Description                                      |
+|-------------------|----------|--------------------------------------------------|
+| `name`            | yes      | Display name for the folder (also used to generate the session namespace) |
+| `path`            | yes      | Absolute path to the project directory           |
+| `default_command` | no       | Command to run automatically in new sessions     |
 
-```bash
-go run .
-# or
-go run . -config /path/to/config.toml
-```
+Folder names are slugified into namespaces (e.g. "Main API" becomes `main-api`). Sessions are named `<namespace>/<session-name>` so they stay grouped in tmux.
+
+## Usage
+
+Run grove directly with `go run .` or run the compiled binary:
+
+    ./grove
+    ./grove -config /path/to/config.toml
 
 ## Keybindings
 
-- `↑/k` move up
-- `↓/j` move down
-- `Enter` attach selected session
-- `n` create new session under selected folder (or selected session's folder)
-- `R` rename selected session
-- `K` kill selected session
-- `c` send command to selected session
-- `/` set or clear a filter
-- `PgUp`/`PgDn` scroll details pane when content is long
-- `r` manual refresh
-- `q` quit
-- `y` confirm kill (when prompted)
-- `n` or `Esc` cancel kill (when prompted)
+| Key              | Action                                                  |
+|------------------|---------------------------------------------------------|
+| `↑` / `k`       | Move up                                                 |
+| `↓` / `j`       | Move down                                               |
+| `Enter`          | Attach to selected session                              |
+| `n`              | Create new session under the selected folder            |
+| `R`              | Rename selected session                                 |
+| `K`              | Kill selected session                                   |
+| `c`              | Send command to selected session                        |
+| `/`              | Filter folders and sessions                             |
+| `Esc`            | Clear filter                                            |
+| `PgUp` / `PgDn` | Scroll the details pane                                 |
+| `r`              | Manual refresh                                          |
+| `q`              | Quit                                                    |
+| `y`              | Confirm kill (when prompted)                            |
+| `n` / `Esc`      | Cancel kill (when prompted)                             |
 
-## Notes
+## Development
 
-- Only sessions that match configured folder namespaces are shown.
-- Session names are sanitized to lowercase slug-like names for consistency.
-- Requires `tmux` in `PATH`.
+```bash
+go build -o grove .   # build binary
+go vet ./...          # lint
+go test ./...         # run all tests
+gofmt -w .            # format
+```
+
+## Architecture
+
+    main.go                  Entrypoint: flag parsing, config loading, Bubble Tea program
+    internal/
+      config/config.go       TOML config parsing, slug-based namespaces, template scaffolding
+      tmux/client.go         Wraps tmux CLI (list/new/kill/rename/attach sessions)
+      ui/model.go            Bubble Tea model: two-pane layout, prompt modes, polling refresh
+
+## License
+
+[MIT](LICENSE)
