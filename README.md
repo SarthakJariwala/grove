@@ -1,8 +1,5 @@
 # grove
 
-*2026-02-23T15:56:26Z by Showboat 0.6.1*
-<!-- showboat-id: 15746824-a424-4ba3-88a6-1f03ba3aae3a -->
-
 A terminal UI for managing tmux sessions, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 Grove lets you organize tmux sessions under named folders defined in a simple TOML config. Create, attach, rename, kill, and send commands to sessions — all from a two-pane TUI with a tree view and details panel.
@@ -26,18 +23,8 @@ Grove lets you organize tmux sessions under named folders defined in a simple TO
 ## Install
 
 ```bash
-go build -o grove . && echo "Build successful: $(./grove -h 2>&1)"
+go install github.com/SarthakJariwala/grove@latest
 ```
-
-```output
-Build successful: Usage of ./grove:
-  -config string
-    	path to config.toml (default "/root/.config/grove/config.toml")
-```
-
-To install into your `$GOPATH/bin`:
-
-    go install github.com/SarthakJariwala/grove@latest
 
 ## Configuration
 
@@ -45,20 +32,7 @@ Grove reads its config from `~/.config/grove/config.toml` by default. On first r
 
 Each `[[folder]]` entry defines a project folder with a name, path, and optional default command to run when creating new sessions:
 
-```bash
-cat <<'TOML'
-[[folder]]
-name = "Main API"
-path = "/Users/you/dev/main-api"
-default_command = "bin/dev"
-
-[[folder]]
-name = "Website"
-path = "/Users/you/dev/website"
-TOML
-```
-
-```output
+```toml
 [[folder]]
 name = "Main API"
 path = "/Users/you/dev/main-api"
@@ -106,22 +80,10 @@ Run grove directly with `go run .` or run the compiled binary:
 ## Development
 
 ```bash
-go vet ./...
-```
-
-```output
-```
-
-```bash
-go test ./... 2>&1; echo "exit: $?"
-```
-
-```output
-?   	github.com/SarthakJariwala/grove	[no test files]
-?   	github.com/SarthakJariwala/grove/internal/config	[no test files]
-?   	github.com/SarthakJariwala/grove/internal/tmux	[no test files]
-?   	github.com/SarthakJariwala/grove/internal/ui	[no test files]
-exit: 0
+go build -o grove .   # build binary
+go vet ./...          # lint
+go test ./...         # run all tests
+gofmt -w .            # format
 ```
 
 ## Architecture
