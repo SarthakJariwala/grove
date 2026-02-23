@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/SarthakJariwala/grove/internal/config"
 	"github.com/SarthakJariwala/grove/internal/tmux"
@@ -53,6 +54,13 @@ const (
 	promptAddFolder
 )
 
+type detailMode int
+
+const (
+	detailNormal detailMode = iota
+	detailPreview
+)
+
 // ── Color palette (forest/grove theme) ──────────────────────────────
 // Primary:   green tones for branding, active states, attached
 // Muted:     grays for borders, secondary text, help
@@ -90,6 +98,13 @@ type Model struct {
 	filterQuery       string
 	confirmKillTarget string
 	detailScroll      int
+
+	detailMode     detailMode
+	previewTarget  string
+	previewContent string
+	previewLoading bool
+	previewErr     error
+	previewSeq     int
 
 	prompt        textinput.Model
 	promptMode    promptMode
@@ -225,6 +240,13 @@ type folderAddedMsg struct {
 	err    error
 }
 
+type paneCapturedMsg struct {
+	target  string
+	content string
+	err     error
+	seq     int
+}
+
 func NewModel(cfg config.Config, cfgPath string, client *tmux.Client) Model {
 	t := textinput.New()
 	t.CharLimit = 512
@@ -262,6 +284,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.detailMode == detailPreview {
+			return m.updatePreview(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -332,6 +357,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingFolder = config.Folder{}
 			m.openPrompt(promptAddFolder, "", "folder name")
 			return m, textinput.Blink
+		case "v":
+			_, ok := m.selectedSessionRow()
+			if !ok {
+				m.errMsg = "select a session to preview"
+				return m, nil
+			}
+			m.detailMode = detailPreview
+			return m, m.startPreview()
 		case "enter":
 			row, ok := m.selectedSessionRow()
 			if !ok {
@@ -378,6 +411,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		clearCmd := m.setStatus("detached from session")
 		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
+
+	case paneCapturedMsg:
+		if msg.seq != m.previewSeq {
+			return m, nil
+		}
+		m.previewLoading = false
+		if msg.err != nil {
+			m.previewErr = msg.err
+			m.previewContent = ""
+		} else {
+			m.previewErr = nil
+			m.previewContent = msg.content
+		}
+		return m, nil
 
 	case folderAddedMsg:
 		if msg.err != nil {
@@ -518,31 +565,45 @@ func (m Model) renderHelpBar() string {
 
 	// Context-sensitive hint at the start
 	var bindings []binding
-	if _, ok := m.selectedSessionRow(); ok {
+	if m.detailMode == detailPreview {
 		bindings = []binding{
 			{"⏎", "attach"},
+			{"esc", "back"},
+			{"q", "quit"},
+		}
+	} else if _, ok := m.selectedSessionRow(); ok {
+		bindings = []binding{
+			{"⏎", "attach"},
+			{"v", "preview"},
 			{"n", "new"},
 			{"R", "rename"},
 			{"K", "kill"},
 			{"c", "cmd"},
 			{"A", "add folder"},
 		}
+		if m.filterQuery != "" {
+			bindings = append(bindings, binding{"esc", "clear filter"})
+		}
+		bindings = append(bindings, []binding{
+			{"/", "filter"},
+			{"r", "refresh"},
+			{"q", "quit"},
+		}...)
 	} else {
 		bindings = []binding{
 			{"n", "new session"},
 			{"A", "add folder"},
 			{"j/k", "navigate"},
 		}
+		if m.filterQuery != "" {
+			bindings = append(bindings, binding{"esc", "clear filter"})
+		}
+		bindings = append(bindings, []binding{
+			{"/", "filter"},
+			{"r", "refresh"},
+			{"q", "quit"},
+		}...)
 	}
-
-	if m.filterQuery != "" {
-		bindings = append(bindings, binding{"esc", "clear filter"})
-	}
-	bindings = append(bindings, []binding{
-		{"/", "filter"},
-		{"r", "refresh"},
-		{"q", "quit"},
-	}...)
 
 	parts := make([]string, 0, len(bindings)*2)
 	sep := m.styles.helpSep.Render(" · ")
@@ -760,6 +821,11 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 	}
 
 	row := m.rows[m.selected]
+
+	if m.detailMode == detailPreview && row.typeOf == rowSession {
+		return m.renderPreviewPane(innerH, maxWidth, paneWidth, dim)
+	}
+
 	var lines []string
 
 	if row.typeOf == rowFolder {
@@ -921,6 +987,41 @@ func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool
 	return m.styledPane(padded, paneWidth, dim)
 }
 
+func wrapLines(lines []string, maxWidth int) []string {
+	if maxWidth < 1 {
+		return lines
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		wrapped := ansi.Hardwrap(line, maxWidth, true)
+		out = append(out, strings.Split(wrapped, "\n")...)
+	}
+	return out
+}
+
+func (m Model) renderPreviewPane(innerH, maxWidth, paneWidth int, dim bool) string {
+	row, _ := m.selectedSessionRow()
+	title := m.styles.paneTitle.Render("Preview") +
+		" " + m.styles.detailMeta.Render(row.sessionName)
+
+	if m.previewLoading {
+		padded := padToHeight(title+"\n\n"+m.styles.emptyHint.Render("capturing pane…"), innerH)
+		return m.styledPane(padded, paneWidth, dim)
+	}
+	if m.previewErr != nil {
+		padded := padToHeight(title+"\n\n"+m.styles.footerErr.Render("error: "+m.previewErr.Error()), innerH)
+		return m.styledPane(padded, paneWidth, dim)
+	}
+
+	lines := strings.Split(strings.TrimRight(m.previewContent, "\n"), "\n")
+	lines = wrapLines(lines, maxWidth)
+	if maxLines := innerH - 2; len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	contentLines := append([]string{title, ""}, lines...)
+	return m.renderDetailLines(contentLines, innerH, paneWidth, dim)
+}
+
 // ── Commands ────────────────────────────────────────────────────────
 
 func (m Model) loadSessionsCmd() tea.Cmd {
@@ -1013,6 +1114,28 @@ func (m Model) updateKillConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		m.detailMode = detailNormal
+		return m, nil
+	case "enter":
+		row, ok := m.selectedSessionRow()
+		if !ok {
+			return m, nil
+		}
+		m.detailMode = detailNormal
+		m.statusMsg = "attached to " + row.sessionName + " (detach with Ctrl-b d)"
+		m.errMsg = ""
+		return m, tea.ExecProcess(m.client.AttachCommand(row.sessionName), func(err error) tea.Msg {
+			return attachedMsg{err: err}
+		})
+	}
+	return m, nil
 }
 
 func (m *Model) openPrompt(mode promptMode, initial, placeholder string) {
@@ -1468,5 +1591,27 @@ func (m Model) sendCommandCmd(name, command string) tea.Cmd {
 			return actionResultMsg{err: err}
 		}
 		return actionResultMsg{status: "sent command to " + name}
+	}
+}
+
+func (m *Model) startPreview() tea.Cmd {
+	row, ok := m.selectedSessionRow()
+	if !ok {
+		m.detailMode = detailNormal
+		return nil
+	}
+	m.previewSeq++
+	m.previewTarget = row.sessionName
+	m.previewLoading = true
+	m.previewErr = nil
+	m.previewContent = ""
+	m.detailScroll = 0
+	return m.capturePaneCmd(row.sessionName, m.previewSeq)
+}
+
+func (m Model) capturePaneCmd(target string, seq int) tea.Cmd {
+	return func() tea.Msg {
+		content, err := m.client.CapturePane(target)
+		return paneCapturedMsg{target: target, content: content, err: err, seq: seq}
 	}
 }
