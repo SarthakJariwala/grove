@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/BurntSushi/toml"
 )
 
 type Config struct {
@@ -17,24 +15,11 @@ type Folder struct {
 	Name           string `toml:"name"`
 	Path           string `toml:"path"`
 	DefaultCommand string `toml:"default_command"`
-	Namespace      string
+	Namespace      string `toml:"-"`
 }
 
-func Load(path string) (Config, error) {
-	var cfg Config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config %q: %w", path, err)
-	}
-
-	if err := cfg.normalize(filepath.Dir(path)); err != nil {
-		return Config{}, err
-	}
-
-	return cfg, nil
-}
-
-func (c *Config) normalize(baseDir string) error {
-	seen := map[string]struct{}{}
+func (c *Config) Normalize(baseDir string) error {
+	seen := map[string]string{}
 	for i := range c.Folders {
 		folder := &c.Folders[i]
 		folder.Name = strings.TrimSpace(folder.Name)
@@ -47,6 +32,8 @@ func (c *Config) normalize(baseDir string) error {
 		if folder.Path == "" {
 			return fmt.Errorf("folder[%d] path is required", i)
 		}
+
+		folder.Path = ExpandHome(folder.Path)
 
 		if !filepath.IsAbs(folder.Path) {
 			folder.Path = filepath.Join(baseDir, folder.Path)
@@ -62,10 +49,10 @@ func (c *Config) normalize(baseDir string) error {
 		if namespace == "" {
 			return fmt.Errorf("folder %q produced empty namespace", folder.Name)
 		}
-		if _, exists := seen[namespace]; exists {
-			return fmt.Errorf("folder %q conflicts with another folder namespace %q", folder.Name, namespace)
+		if existing, exists := seen[namespace]; exists {
+			return fmt.Errorf("folder %q conflicts with folder %q (both produce namespace %q)", folder.Name, existing, namespace)
 		}
-		seen[namespace] = struct{}{}
+		seen[namespace] = folder.Name
 		folder.Namespace = namespace
 	}
 
@@ -94,42 +81,20 @@ func Slug(s string) string {
 	return out
 }
 
-func AppendFolder(path string, f Folder) error {
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("open config for append: %w", err)
+func ExpandHome(path string) string {
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return home
 	}
-	defer file.Close()
-
-	block := fmt.Sprintf("\n[[folder]]\nname = %q\npath = %q\n", f.Name, f.Path)
-	if f.DefaultCommand != "" {
-		block += fmt.Sprintf("default_command = %q\n", f.DefaultCommand)
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return filepath.Join(home, path[2:])
 	}
-
-	if _, err := file.WriteString(block); err != nil {
-		return fmt.Errorf("write folder block: %w", err)
-	}
-	return nil
-}
-
-func EnsureTemplate(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	const tmpl = `# Example grove config
-#
-# [[folder]]
-# name = "Main API"
-# path = "/Users/you/dev/main-api"
-# default_command = "bin/dev"
-`
-
-	return os.WriteFile(path, []byte(tmpl), 0o644)
+	return path
 }

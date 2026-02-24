@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/SarthakJariwala/grove/internal/config"
+	"github.com/SarthakJariwala/grove/internal/configfile"
 	"github.com/SarthakJariwala/grove/internal/tmux"
 	"github.com/SarthakJariwala/grove/internal/ui"
 )
@@ -22,18 +22,17 @@ func defaultConfigPath() string {
 	return filepath.Join(home, ".config", "grove", "config.toml")
 }
 
-func main() {
+func run() error {
 	configPath := flag.String("config", defaultConfigPath(), "path to config.toml")
 	flag.Parse()
-	if err := config.EnsureTemplate(*configPath); err != nil {
-		fmt.Fprintf(os.Stderr, "could not initialize config template: %v\n", err)
-		os.Exit(1)
+
+	if err := configfile.EnsureTemplate(*configPath); err != nil {
+		return fmt.Errorf("could not initialize config template: %w", err)
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := configfile.Load(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("config error: %w", err)
 	}
 
 	client := tmux.NewClient()
@@ -41,7 +40,15 @@ func main() {
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "program error: %v\n", err)
+		return fmt.Errorf("program error: %w", err)
+	}
+
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

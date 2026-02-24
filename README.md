@@ -23,7 +23,7 @@ Grove lets you organize tmux sessions under named folders defined in a simple TO
 ## Install
 
 ```bash
-go install github.com/SarthakJariwala/grove@latest
+go install github.com/SarthakJariwala/grove/cmd/grove@latest
 ```
 
 ## Configuration

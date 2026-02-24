@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/SarthakJariwala/grove/internal/config"
+	"github.com/SarthakJariwala/grove/internal/configfile"
 	"github.com/SarthakJariwala/grove/internal/tmux"
 )
 
@@ -83,7 +84,7 @@ const (
 type Model struct {
 	cfg     config.Config
 	cfgPath string
-	client  *tmux.Client
+	client  tmux.SessionManager
 	styles  styleSet
 
 	width  int
@@ -250,7 +251,7 @@ type paneCapturedMsg struct {
 
 type previewTickMsg struct{}
 
-func NewModel(cfg config.Config, cfgPath string, client *tmux.Client) Model {
+func NewModel(cfg config.Config, cfgPath string, client tmux.SessionManager) Model {
 	t := textinput.New()
 	t.CharLimit = 512
 	t.Prompt = ""
@@ -1261,7 +1262,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.errMsg = "folder path is required"
 						return m, nil
 					}
-					value = expandHome(value)
+					value = config.ExpandHome(value)
 					absPath, err := filepath.Abs(value)
 					if err != nil {
 						m.errMsg = fmt.Sprintf("invalid path: %v", err)
@@ -1590,16 +1591,6 @@ func sanitizeLeaf(in string) string {
 	return out
 }
 
-func expandHome(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, path[2:])
-		}
-	}
-	return path
-}
-
 func (m Model) newSessionCmd(folder config.Folder, leaf string) tea.Cmd {
 	leaf = sanitizeLeaf(leaf)
 	fullName := folder.Namespace + "/" + leaf
@@ -1638,7 +1629,7 @@ func (m Model) killSessionCmd(name string) tea.Cmd {
 func (m Model) addFolderCmd(f config.Folder) tea.Cmd {
 	cfgPath := m.cfgPath
 	return func() tea.Msg {
-		if err := config.AppendFolder(cfgPath, f); err != nil {
+		if err := configfile.AppendFolder(cfgPath, f); err != nil {
 			return folderAddedMsg{err: err}
 		}
 		return folderAddedMsg{folder: f}

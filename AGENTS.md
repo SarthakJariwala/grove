@@ -1,17 +1,18 @@
 # AGENTS.md — Grove
 
 ## Build & Run
-- Build: `go build -o grove .`
-- Run: `go run .`
+- Build: `go build -o grove ./cmd/grove/`
+- Run: `go run ./cmd/grove/`
 - Test all: `go test ./...`
 - Test single package: `go test ./internal/config`
 - Lint: `go vet ./...`
 
 ## Architecture
 Grove is a TUI tmux session manager built with Go 1.23 and Bubble Tea (charmbracelet).
-- `main.go` — entrypoint: loads TOML config, creates tmux client, runs Bubble Tea program
-- `internal/config/` — TOML config parsing (`Config`, `Folder`), slug generation, template scaffolding
-- `internal/tmux/` — `Client` wraps tmux CLI commands (list/new/kill/rename/attach sessions)
+- `cmd/grove/main.go` — entrypoint: parses flags, wires dependencies, runs Bubble Tea program
+- `internal/config/` — pure types (`Config`, `Folder`), slug generation, normalization/validation
+- `internal/configfile/` — TOML config file I/O (`Load`, `EnsureTemplate`, `AppendFolder`)
+- `internal/tmux/` — `SessionManager` interface + `Client` implementation wrapping tmux CLI
 - `internal/ui/` — Bubble Tea `Model` with tree view of folders→sessions, prompt modes, filtering
 
 ## Code Style

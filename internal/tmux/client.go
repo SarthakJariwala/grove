@@ -34,9 +34,20 @@ type PaneInfo struct {
 	SilenceFlag  bool
 }
 
+type SessionManager interface {
+	ListSessions() ([]Session, error)
+	ListPanes() ([]PaneInfo, error)
+	NewSession(name, cwd string) error
+	SendKeys(target, command string) error
+	RenameSession(oldName, newName string) error
+	KillSession(name string) error
+	CapturePane(session string) (string, error)
+	AttachCommand(name string) *exec.Cmd
+}
+
 type Client struct{}
 
-func NewClient() *Client {
+func NewClient() SessionManager {
 	return &Client{}
 }
 

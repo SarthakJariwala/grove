@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
-go build -o grove .       # build binary
-go run .                  # run directly
-go run . -config /path/to/config.toml  # custom config path
+go build -o grove ./cmd/grove/       # build binary
+go run ./cmd/grove/                  # run directly
+go run ./cmd/grove/ -config /path/to/config.toml  # custom config path
 ```
 
 ## Test & Lint
@@ -25,9 +25,10 @@ No tests exist yet — add `_test.go` files next to source when writing tests.
 
 Grove is a TUI tmux session manager built with Go 1.23 and Bubble Tea.
 
-- `main.go` — entrypoint: parses `-config` flag, loads TOML config, creates tmux client, runs Bubble Tea program with alt screen
-- `internal/config/` — TOML config parsing (`Config`, `Folder`), slug-based namespace generation, template scaffolding at `~/.config/grove/config.toml`
-- `internal/tmux/` — `Client` wraps tmux CLI commands (list/new/kill/rename/attach sessions) via `os/exec`
+- `cmd/grove/main.go` — entrypoint: parses `-config` flag, wires dependencies, runs Bubble Tea program with alt screen
+- `internal/config/` — pure types (`Config`, `Folder`), slug-based namespace generation, normalization/validation
+- `internal/configfile/` — TOML config file I/O (`Load`, `EnsureTemplate`, `AppendFolder`)
+- `internal/tmux/` — `SessionManager` interface + `Client` implementation wrapping tmux CLI via `os/exec`
 - `internal/ui/` — Bubble Tea `Model` with two-pane layout (tree + details), prompt modes for session operations, 2-second polling refresh
 
 The UI uses a flat `[]treeRow` list mixing folder headers and session entries. Sessions are grouped under folders by matching the `<namespace>/` prefix on tmux session names. Filtering, scrolling, and prompt input all operate on this row list.
