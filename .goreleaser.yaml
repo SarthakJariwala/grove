@@ -1,0 +1,44 @@
+version: 2
+
+project_name: grove
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/grove/
+    binary: grove
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: SarthakJariwala
+      name: homebrew-grove
+    homepage: https://github.com/SarthakJariwala/grove
+    description: Scale agents, not stress. Calm terminal energy for chaotic agent workflows.
+    license: MIT
+    install: |
+      bin.install "grove"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

@@ -1,13 +1,15 @@
 # grove
 
-A terminal UI for managing agent sessions, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+> Scale agents, not stress. Calm terminal energy for chaotic agent workflows.
 
-Grove lets you organize tmux sessions under named folders defined in a simple TOML config. Create, attach, rename, kill, and send commands to sessions — all from a two-pane TUI with a tree view and details panel.
+A calm terminal UI for managing agent sessions.
+
+Grove lets you organize agent sessions under named folders defined in a simple TOML config. Create, preview, attach, rename, kill, and send commands to sessions — all from a two-pane TUI with a tree view and details panel.
 
 ## Features
 
 - Organize tmux sessions under named folders with slug-based namespaces
-- Two-pane layout: tree view (left) + session details (right)
+- Two-pane layout: tree view (left) + session details and preview (right)
 - Create new sessions that auto-attach, with optional default commands
 - Attach to existing sessions and return to the TUI on detach
 - Rename, kill, and send commands to sessions
@@ -17,10 +19,16 @@ Grove lets you organize tmux sessions under named folders defined in a simple TO
 
 ## Requirements
 
-- [Go](https://go.dev/) 1.23+
-- [tmux](https://github.com/tmux/tmux) in your `PATH`
+- [tmux](https://github.com/tmux/tmux) in your `PATH` or install it with `brew install tmux`
 
 ## Install
+
+```bash
+brew tap SarthakJariwala/grove
+brew install grove
+```
+
+Or, if you want to use `go` to install:
 
 ```bash
 go install github.com/SarthakJariwala/grove/cmd/grove@latest
