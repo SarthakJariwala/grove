@@ -181,9 +181,9 @@ func defaultStyles() styleSet {
 		// Tree rows
 		rowFolder:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorText)),
 		rowSession:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
-		rowSelected:     lipgloss.NewStyle().Background(lipgloss.Color(colorBgSubtle)),
-		rowSelectedText: lipgloss.NewStyle().Foreground(lipgloss.Color(colorWhite)).Bold(true).Background(lipgloss.Color(colorBgSubtle)),
-		selAccent:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Background(lipgloss.Color(colorBgSubtle)),
+		rowSelected:     lipgloss.NewStyle(),
+		rowSelectedText: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
+		selAccent:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
 		rowKillTarget:   lipgloss.NewStyle().Background(lipgloss.Color("#3d1214")),
 
 		// Status indicators
