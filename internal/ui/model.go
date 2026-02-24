@@ -19,8 +19,8 @@ import (
 )
 
 const refreshInterval = 2 * time.Second
-const statusClearDelay = 3 * time.Second
-const previewRefreshInterval = 500 * time.Millisecond
+const statusClearDelay = 1500 * time.Millisecond
+const previewRefreshInterval = 200 * time.Millisecond
 
 type rowType int
 
