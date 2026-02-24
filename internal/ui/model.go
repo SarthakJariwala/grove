@@ -19,6 +19,7 @@ import (
 
 const refreshInterval = 2 * time.Second
 const statusClearDelay = 3 * time.Second
+const previewRefreshInterval = 500 * time.Millisecond
 
 type rowType int
 
@@ -247,6 +248,8 @@ type paneCapturedMsg struct {
 	seq     int
 }
 
+type previewTickMsg struct{}
+
 func NewModel(cfg config.Config, cfgPath string, client *tmux.Client) Model {
 	t := textinput.New()
 	t.CharLimit = 512
@@ -364,7 +367,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.detailMode = detailPreview
-			return m, m.startPreview()
+			return m, tea.Batch(m.startPreview(), previewTickCmd())
 		case "enter":
 			row, ok := m.selectedSessionRow()
 			if !ok {
@@ -425,6 +428,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewContent = msg.content
 		}
 		return m, nil
+
+	case previewTickMsg:
+		if m.detailMode != detailPreview {
+			return m, nil
+		}
+		return m, tea.Batch(
+			m.capturePaneCmd(m.previewTarget, m.previewSeq),
+			previewTickCmd(),
+		)
 
 	case folderAddedMsg:
 		if msg.err != nil {
@@ -987,6 +999,17 @@ func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool
 	return m.styledPane(padded, paneWidth, dim)
 }
 
+func truncateLines(lines []string, maxWidth int) []string {
+	if maxWidth < 1 {
+		return lines
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, ansi.Truncate(line, maxWidth, ""))
+	}
+	return out
+}
+
 func wrapLines(lines []string, maxWidth int) []string {
 	if maxWidth < 1 {
 		return lines
@@ -1013,8 +1036,9 @@ func (m Model) renderPreviewPane(innerH, maxWidth, paneWidth int, dim bool) stri
 		return m.styledPane(padded, paneWidth, dim)
 	}
 
-	lines := strings.Split(strings.TrimRight(m.previewContent, "\n"), "\n")
-	lines = wrapLines(lines, maxWidth)
+	content := sanitizeANSI(m.previewContent)
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	lines = truncateLines(lines, maxWidth)
 	if maxLines := innerH - 2; len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
 	}
@@ -1077,6 +1101,12 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func previewTickCmd() tea.Cmd {
+	return tea.Tick(previewRefreshInterval, func(time.Time) tea.Msg {
+		return previewTickMsg{}
+	})
+}
+
 func (m Model) selectedSessionRow() (treeRow, bool) {
 	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
 		return treeRow{}, false
@@ -1123,6 +1153,8 @@ func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.detailMode = detailNormal
 		return m, nil
+	case "r":
+		return m, m.capturePaneCmd(m.previewTarget, m.previewSeq)
 	case "enter":
 		row, ok := m.selectedSessionRow()
 		if !ok {
@@ -1472,6 +1504,34 @@ func isShellCommand(cmd string) bool {
 		return true
 	}
 	return false
+}
+
+func sanitizeANSI(s string) string {
+	// Strip CSI sequences that are not SGR (Select Graphic Rendition).
+	// SGR sequences end with 'm'; others (cursor movement, screen clear, etc.)
+	// could interfere with Bubble Tea's rendering.
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if i+1 < len(s) && s[i] == '\x1b' && s[i+1] == '[' {
+			// Find end of CSI sequence (first byte in 0x40–0x7E)
+			j := i + 2
+			for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3F {
+				j++
+			}
+			if j < len(s) && s[j] >= 0x40 && s[j] <= 0x7E {
+				if s[j] == 'm' {
+					b.WriteString(s[i : j+1])
+				}
+				i = j + 1
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 func formatDuration(d time.Duration) string {

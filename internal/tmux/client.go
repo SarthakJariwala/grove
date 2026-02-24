@@ -239,7 +239,7 @@ func (c *Client) KillSession(name string) error {
 }
 
 func (c *Client) CapturePane(session string) (string, error) {
-	cmd := exec.Command("tmux", "capture-pane", "-t", session, "-p")
+	cmd := exec.Command("tmux", "capture-pane", "-e", "-t", session, "-p")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane: %w (%s)", err, strings.TrimSpace(string(out)))
