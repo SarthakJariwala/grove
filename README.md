@@ -73,6 +73,8 @@ Run grove directly with `go run .` or run the compiled binary:
 | `↑` / `k`       | Move up                                                 |
 | `↓` / `j`       | Move down                                               |
 | `Enter`          | Attach to selected session                              |
+| `v`              | Preview selected session (live pane capture)            |
+| `z`              | Zoom in/out preview pane (in preview mode)              |
 | `n`              | Create new session under the selected folder            |
 | `R`              | Rename selected session                                 |
 | `K`              | Kill selected session                                   |
