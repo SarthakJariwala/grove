@@ -107,6 +107,7 @@ type Model struct {
 	previewLoading bool
 	previewErr     error
 	previewSeq     int
+	previewZoomed  bool
 
 	prompt        textinput.Model
 	promptMode    promptMode
@@ -487,7 +488,15 @@ func (m Model) View() string {
 	dimPanes := m.promptMode != promptNone
 
 	var content string
-	if m.width > 70 {
+	if m.detailMode == detailPreview && m.previewZoomed {
+		// Zoomed preview: full-width, no tree pane
+		paneWidth := m.width
+		paneInner := paneWidth - 4
+		if paneInner < 10 {
+			paneInner = 10
+		}
+		content = m.renderDetailPane(paneInnerH, paneInner, paneWidth, dimPanes)
+	} else if m.width > 70 {
 		leftWidth := (m.width * 30) / 100
 		if leftWidth < 30 {
 			leftWidth = 30
@@ -579,8 +588,13 @@ func (m Model) renderHelpBar() string {
 	// Context-sensitive hint at the start
 	var bindings []binding
 	if m.detailMode == detailPreview {
+		zoomHint := "zoom in"
+		if m.previewZoomed {
+			zoomHint = "zoom out"
+		}
 		bindings = []binding{
 			{"⏎", "attach"},
+			{"z", zoomHint},
 			{"esc", "back"},
 			{"q", "quit"},
 		}
@@ -1152,7 +1166,15 @@ func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "esc":
+		if m.previewZoomed {
+			m.previewZoomed = false
+			return m, nil
+		}
 		m.detailMode = detailNormal
+		return m, nil
+	case "z":
+		m.previewZoomed = !m.previewZoomed
+		m.detailScroll = 0
 		return m, nil
 	case "r":
 		return m, m.capturePaneCmd(m.previewTarget, m.previewSeq)
@@ -1162,6 +1184,7 @@ func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.detailMode = detailNormal
+		m.previewZoomed = false
 		m.statusMsg = "attached to " + row.sessionName + " (detach with Ctrl-b d)"
 		m.errMsg = ""
 		return m, tea.ExecProcess(m.client.AttachCommand(row.sessionName), func(err error) tea.Msg {
@@ -1657,6 +1680,7 @@ func (m *Model) startPreview() tea.Cmd {
 	m.previewErr = nil
 	m.previewContent = ""
 	m.detailScroll = 0
+	m.previewZoomed = false
 	return m.capturePaneCmd(row.sessionName, m.previewSeq)
 }
 
