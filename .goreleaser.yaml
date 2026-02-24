@@ -19,18 +19,26 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
-brews:
+homebrew_casks:
   - repository:
       owner: SarthakJariwala
       name: homebrew-grove
     homepage: https://github.com/SarthakJariwala/grove
     description: Scale agents, not stress. Calm terminal energy for chaotic agent workflows.
-    license: MIT
-    install: |
-      bin.install "grove"
+    url:
+      verified: github.com/SarthakJariwala/grove
+    binaries:
+      - grove
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/grove"]
+          end
 
 checksum:
   name_template: "checksums.txt"
