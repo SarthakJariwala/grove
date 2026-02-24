@@ -33,6 +33,8 @@ homebrew_casks:
       verified: github.com/SarthakJariwala/grove
     binaries:
       - grove
+    dependencies:
+      - formula: tmux
     hooks:
       post:
         install: |
