@@ -10,6 +10,7 @@ import (
 
 	"github.com/SarthakJariwala/grove/internal/configfile"
 	"github.com/SarthakJariwala/grove/internal/tmux"
+	"github.com/SarthakJariwala/grove/internal/tmuxconfig"
 	"github.com/SarthakJariwala/grove/internal/ui"
 )
 
@@ -28,6 +29,12 @@ func run() error {
 
 	if err := configfile.EnsureTemplate(*configPath); err != nil {
 		return fmt.Errorf("could not initialize config template: %w", err)
+	}
+
+	if created, path, err := tmuxconfig.EnsureDefault(); err != nil {
+		fmt.Fprintln(os.Stderr, "grove: warning: could not install default tmux config:", err)
+	} else if created {
+		fmt.Fprintln(os.Stderr, "grove: installed default tmux config at", path)
 	}
 
 	cfg, err := configfile.Load(*configPath)
