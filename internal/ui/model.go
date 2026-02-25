@@ -43,6 +43,7 @@ type treeRow struct {
 	alertsSilence  bool
 	currentCommand string
 	paneTitle      string
+	currentPath    string
 	lastActivity   int64
 }
 
@@ -382,7 +383,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = "no editor configured; set editor_command in config or $EDITOR"
 				return m, nil
 			}
-			return m, m.openEditorCmd(folder, cmd)
+			dir := folder.Path
+			if row, ok := m.selectedSessionRow(); ok && row.currentPath != "" {
+				dir = row.currentPath
+			}
+			return m, m.openEditorInDir(cmd, dir)
 		case "enter":
 			row, ok := m.selectedSessionRow()
 			if !ok {
@@ -695,6 +700,7 @@ func (m *Model) rebuildRows() {
 				alertsSilence:  s.AlertsSilence,
 				currentCommand: s.CurrentCommand,
 				paneTitle:      s.PaneTitle,
+				currentPath:    s.CurrentPath,
 				lastActivity:   s.LastActivity,
 			}
 
@@ -1101,6 +1107,7 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 				if st, ok := states[sessions[i].Name]; ok {
 					sessions[i].CurrentCommand = st.Command
 					sessions[i].PaneTitle = st.PaneTitle
+					sessions[i].CurrentPath = st.CurrentPath
 					if st.BellFlag {
 						sessions[i].AlertsBell = true
 					}
@@ -1767,9 +1774,9 @@ func (m Model) resolveEditorCommand(folder config.Folder) string {
 	return ""
 }
 
-func (m Model) openEditorCmd(folder config.Folder, cmdStr string) tea.Cmd {
+func (m Model) openEditorInDir(cmdStr string, dir string) tea.Cmd {
 	c := exec.Command("sh", "-lc", cmdStr)
-	c.Dir = folder.Path
+	c.Dir = dir
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return actionResultMsg{status: "editor closed", err: err}
 	})
