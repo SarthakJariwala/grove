@@ -1,7 +1,10 @@
+# editor_command = "code ."       # global default editor (e.g. "zed .", "vi .")
+
 [[folder]]
 name = "Main API"
 path = "/Users/you/dev/main-api"
 default_command = "bin/dev"
+# editor_command = "zed ."        # per-folder override (optional)
 
 [[folder]]
 name = "Website"

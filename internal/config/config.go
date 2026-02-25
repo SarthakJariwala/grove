@@ -8,23 +8,27 @@ import (
 )
 
 type Config struct {
-	Folders []Folder `toml:"folder"`
+	EditorCommand string   `toml:"editor_command"`
+	Folders       []Folder `toml:"folder"`
 }
 
 type Folder struct {
 	Name           string `toml:"name"`
 	Path           string `toml:"path"`
 	DefaultCommand string `toml:"default_command"`
+	EditorCommand  string `toml:"editor_command"`
 	Namespace      string `toml:"-"`
 }
 
 func (c *Config) Normalize(baseDir string) error {
+	c.EditorCommand = strings.TrimSpace(c.EditorCommand)
 	seen := map[string]string{}
 	for i := range c.Folders {
 		folder := &c.Folders[i]
 		folder.Name = strings.TrimSpace(folder.Name)
 		folder.Path = strings.TrimSpace(folder.Path)
 		folder.DefaultCommand = strings.TrimSpace(folder.DefaultCommand)
+		folder.EditorCommand = strings.TrimSpace(folder.EditorCommand)
 
 		if folder.Name == "" {
 			return fmt.Errorf("folder[%d] name is required", i)

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -370,6 +371,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.detailMode = detailPreview
 			return m, tea.Batch(m.startPreview(), previewTickCmd())
+		case "e":
+			folder, ok := m.selectedFolder()
+			if !ok {
+				m.errMsg = "select a folder or session"
+				return m, nil
+			}
+			cmd := m.resolveEditorCommand(folder)
+			if cmd == "" {
+				m.errMsg = "no editor configured; set editor_command in config or $EDITOR"
+				return m, nil
+			}
+			return m, m.openEditorCmd(folder, cmd)
 		case "enter":
 			row, ok := m.selectedSessionRow()
 			if !ok {
@@ -553,7 +566,7 @@ func (m Model) renderFooter() string {
 	if m.promptMode != promptNone {
 		label := m.styles.promptLabel.Render(m.promptTitle() + " ")
 		enterHint := "enter confirm"
-		if m.promptMode == promptAddFolder && m.promptStep < 2 {
+		if m.promptMode == promptAddFolder && m.promptStep < 3 {
 			enterHint = "enter next"
 		}
 		extra := ""
@@ -606,6 +619,7 @@ func (m Model) renderHelpBar() string {
 		bindings = []binding{
 			{"⏎", "attach"},
 			{"v", "preview"},
+			{"e", "editor"},
 			{"n", "new"},
 			{"R", "rename"},
 			{"K", "kill"},
@@ -623,6 +637,7 @@ func (m Model) renderHelpBar() string {
 	} else {
 		bindings = []binding{
 			{"n", "new session"},
+			{"e", "editor"},
 			{"A", "add folder"},
 			{"j/k", "navigate"},
 		}
@@ -1316,6 +1331,12 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, textinput.Blink
 				case 2:
 					m.pendingFolder.DefaultCommand = value
+					m.promptStep = 3
+					m.promptMode = promptAddFolder
+					m.openPrompt(promptAddFolder, "", "editor command (optional, e.g. code .)")
+					return m, textinput.Blink
+				case 3:
+					m.pendingFolder.EditorCommand = value
 					return m, m.addFolderCmd(m.pendingFolder)
 				}
 			case promptFilter:
@@ -1404,7 +1425,7 @@ func (m Model) promptTitle() string {
 	case promptFilter:
 		return "filter:"
 	case promptAddFolder:
-		return fmt.Sprintf("add folder (%d/3):", m.promptStep+1)
+		return fmt.Sprintf("add folder (%d/4):", m.promptStep+1)
 	default:
 		return ""
 	}
@@ -1731,6 +1752,27 @@ func (m Model) sendCommandCmd(name, command string) tea.Cmd {
 		}
 		return actionResultMsg{status: "sent command to " + name}
 	}
+}
+
+func (m Model) resolveEditorCommand(folder config.Folder) string {
+	if folder.EditorCommand != "" {
+		return folder.EditorCommand
+	}
+	if m.cfg.EditorCommand != "" {
+		return m.cfg.EditorCommand
+	}
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		return editor
+	}
+	return ""
+}
+
+func (m Model) openEditorCmd(folder config.Folder, cmdStr string) tea.Cmd {
+	c := exec.Command("sh", "-lc", cmdStr)
+	c.Dir = folder.Path
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return actionResultMsg{status: "editor closed", err: err}
+	})
 }
 
 func (m *Model) startPreview() tea.Cmd {

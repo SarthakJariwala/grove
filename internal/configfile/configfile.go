@@ -34,6 +34,9 @@ func AppendFolder(path string, f config.Folder) error {
 	if f.DefaultCommand != "" {
 		block += fmt.Sprintf("default_command = %q\n", f.DefaultCommand)
 	}
+	if f.EditorCommand != "" {
+		block += fmt.Sprintf("editor_command = %q\n", f.EditorCommand)
+	}
 
 	if _, err := file.WriteString(block); err != nil {
 		return fmt.Errorf("write folder block: %w", err)
@@ -54,10 +57,13 @@ func EnsureTemplate(path string) error {
 
 	const tmpl = `# Example grove config
 #
+# editor_command = "code ."       # global default editor (e.g. "zed .", "vi .")
+#
 # [[folder]]
 # name = "Main API"
 # path = "/Users/you/dev/main-api"
 # default_command = "bin/dev"
+# editor_command = "zed ."        # per-folder override (optional)
 `
 
 	if err := os.WriteFile(path, []byte(tmpl), 0o644); err != nil {
