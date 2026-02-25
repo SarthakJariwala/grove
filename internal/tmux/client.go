@@ -17,9 +17,10 @@ type Session struct {
 	AlertsBell     bool
 	AlertsActivity bool
 	AlertsSilence  bool
-	LastActivity int64
+	LastActivity   int64
 	CurrentCommand string
 	PaneTitle      string
+	CurrentPath    string
 }
 
 type PaneInfo struct {
@@ -32,6 +33,7 @@ type PaneInfo struct {
 	ActivityFlag bool
 	BellFlag     bool
 	SilenceFlag  bool
+	CurrentPath  string
 }
 
 type SessionManager interface {
@@ -112,7 +114,7 @@ func (c *Client) ListSessions() ([]Session, error) {
 
 func (c *Client) ListPanes() ([]PaneInfo, error) {
 	cmd := exec.Command("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{window_index}\t#{pane_current_command}\t#{?pane_active,1,0}\t#{?window_active,1,0}\t#{window_activity_flag}\t#{window_bell_flag}\t#{window_silence_flag}\t#{pane_title}")
+		"#{session_name}\t#{window_index}\t#{pane_current_command}\t#{?pane_active,1,0}\t#{?window_active,1,0}\t#{window_activity_flag}\t#{window_bell_flag}\t#{window_silence_flag}\t#{pane_title}\t#{pane_current_path}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if bytes.Contains(out, []byte("no server running")) ||
@@ -130,7 +132,7 @@ func (c *Client) ListPanes() ([]PaneInfo, error) {
 			continue
 		}
 
-		parts := strings.SplitN(line, "\t", 9)
+		parts := strings.SplitN(line, "\t", 10)
 		if len(parts) < 5 {
 			continue
 		}
@@ -155,6 +157,9 @@ func (c *Client) ListPanes() ([]PaneInfo, error) {
 		if len(parts) >= 9 {
 			p.PaneTitle = parts[8]
 		}
+		if len(parts) >= 10 {
+			p.CurrentPath = parts[9]
+		}
 		panes = append(panes, p)
 	}
 
@@ -168,6 +173,7 @@ func (c *Client) ListPanes() ([]PaneInfo, error) {
 type ActivePaneState struct {
 	Command      string
 	PaneTitle    string
+	CurrentPath  string
 	BellFlag     bool
 	ActivityFlag bool
 	SilenceFlag  bool
@@ -178,10 +184,11 @@ func ActivePaneStates(panes []PaneInfo) map[string]ActivePaneState {
 	for _, p := range panes {
 		state, exists := result[p.SessionName]
 
-		// Active window+pane provides command and title
+		// Active window+pane provides command, title, and path
 		if p.WindowActive && p.PaneActive {
 			state.Command = p.Command
 			state.PaneTitle = stripTitleBranding(strings.TrimSpace(p.PaneTitle))
+			state.CurrentPath = p.CurrentPath
 		}
 
 		// Aggregate alert flags across all windows in the session
