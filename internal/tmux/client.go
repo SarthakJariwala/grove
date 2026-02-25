@@ -49,12 +49,14 @@ type SessionManager interface {
 
 type Client struct{}
 
+var execCommand = exec.Command
+
 func NewClient() SessionManager {
 	return &Client{}
 }
 
 func (c *Client) ListSessions() ([]Session, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F",
+	cmd := execCommand("tmux", "list-sessions", "-F",
 		"#{session_name}:#{session_windows}:#{?session_attached,attached,detached}:#{session_alerts}:#{session_activity}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -113,7 +115,7 @@ func (c *Client) ListSessions() ([]Session, error) {
 }
 
 func (c *Client) ListPanes() ([]PaneInfo, error) {
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F",
+	cmd := execCommand("tmux", "list-panes", "-a", "-F",
 		"#{session_name}\t#{window_index}\t#{pane_current_command}\t#{?pane_active,1,0}\t#{?window_active,1,0}\t#{window_activity_flag}\t#{window_bell_flag}\t#{window_silence_flag}\t#{pane_title}\t#{pane_current_path}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -221,7 +223,7 @@ func stripTitleBranding(title string) string {
 }
 
 func (c *Client) NewSession(name, cwd string) error {
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", cwd)
+	cmd := execCommand("tmux", "new-session", "-d", "-s", name, "-c", cwd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux new-session: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -230,7 +232,7 @@ func (c *Client) NewSession(name, cwd string) error {
 }
 
 func (c *Client) SendKeys(target, command string) error {
-	cmd := exec.Command("tmux", "send-keys", "-t", target, command, "C-m")
+	cmd := execCommand("tmux", "send-keys", "-t", target, command, "C-m")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux send-keys: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -239,7 +241,7 @@ func (c *Client) SendKeys(target, command string) error {
 }
 
 func (c *Client) RenameSession(oldName, newName string) error {
-	cmd := exec.Command("tmux", "rename-session", "-t", oldName, newName)
+	cmd := execCommand("tmux", "rename-session", "-t", oldName, newName)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux rename-session: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -248,7 +250,7 @@ func (c *Client) RenameSession(oldName, newName string) error {
 }
 
 func (c *Client) KillSession(name string) error {
-	cmd := exec.Command("tmux", "kill-session", "-t", name)
+	cmd := execCommand("tmux", "kill-session", "-t", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux kill-session: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -257,7 +259,7 @@ func (c *Client) KillSession(name string) error {
 }
 
 func (c *Client) CapturePane(session string) (string, error) {
-	cmd := exec.Command("tmux", "capture-pane", "-e", "-t", session, "-p")
+	cmd := execCommand("tmux", "capture-pane", "-e", "-t", session, "-p")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -266,5 +268,5 @@ func (c *Client) CapturePane(session string) (string, error) {
 }
 
 func (c *Client) AttachCommand(name string) *exec.Cmd {
-	return exec.Command("tmux", "attach", "-t", name)
+	return execCommand("tmux", "attach", "-t", name)
 }
