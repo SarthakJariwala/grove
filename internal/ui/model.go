@@ -556,7 +556,11 @@ func (m Model) renderFooter() string {
 		if m.promptMode == promptAddFolder && m.promptStep < 2 {
 			enterHint = "enter next"
 		}
-		hint := m.styles.promptHint.Render("  " + enterHint + " · esc cancel")
+		extra := ""
+		if m.promptMode == promptAddFolder && m.promptStep == 1 {
+			extra = " · tab complete"
+		}
+		hint := m.styles.promptHint.Render("  " + enterHint + " · esc cancel" + extra)
 		return label + m.prompt.View() + hint
 	}
 
@@ -1215,6 +1219,11 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.promptMode = promptNone
 			m.statusMsg = ""
 			return m, nil
+		case "tab":
+			if m.promptMode == promptAddFolder && m.promptStep == 1 {
+				m.completePathInput()
+				return m, nil
+			}
 		case "enter":
 			value := strings.TrimSpace(m.prompt.Value())
 			m.prompt.Blur()
@@ -1326,6 +1335,62 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.prompt, cmd = m.prompt.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) completePathInput() {
+	raw := m.prompt.Value()
+	if raw == "" {
+		return
+	}
+	expanded := config.ExpandHome(raw)
+	expanded = os.ExpandEnv(expanded)
+
+	dir, prefix := filepath.Split(expanded)
+	if dir == "" {
+		dir = "."
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	var matches []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) && e.IsDir() {
+			matches = append(matches, e.Name())
+		}
+	}
+	if len(matches) == 0 {
+		return
+	}
+
+	// Find longest common prefix among matches
+	common := matches[0]
+	for _, m := range matches[1:] {
+		for i := range common {
+			if i >= len(m) || common[i] != m[i] {
+				common = common[:i]
+				break
+			}
+		}
+	}
+
+	completed := filepath.Join(dir, common)
+	if len(matches) == 1 {
+		completed += string(filepath.Separator)
+	}
+
+	// Convert back to use ~/  if the original input used it
+	if strings.HasPrefix(raw, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.HasPrefix(completed, home) {
+			completed = "~" + completed[len(home):]
+		}
+	}
+
+	m.prompt.SetValue(completed)
+	m.prompt.SetCursor(len(completed))
 }
 
 func (m Model) promptTitle() string {
