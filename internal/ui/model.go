@@ -585,7 +585,7 @@ func (m Model) renderFooter() string {
 	// Kill confirmation mode
 	if m.confirmKillTarget != "" {
 		warn := m.styles.footerWarn.Render("kill " + m.confirmKillTarget + "?")
-		hint := m.styles.helpDesc.Render("  y confirm · n cancel")
+		hint := m.styles.helpDesc.Render("  y/enter confirm · n cancel")
 		return warn + hint
 	}
 
@@ -1174,7 +1174,7 @@ func (m Model) updateKillConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch strings.ToLower(key.String()) {
-	case "y":
+	case "y", "enter":
 		target := m.confirmKillTarget
 		m.confirmKillTarget = ""
 		return m, m.killSessionCmd(target)
