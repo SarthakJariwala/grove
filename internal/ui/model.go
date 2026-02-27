@@ -788,23 +788,12 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 
 			winStr := fmt.Sprintf("(%dw)", row.windows)
 
-			// Build suffix: typed alert indicators, then pane title or command
+			// Build suffix: alert indicators only.
 			suffix := ""
 			plainSuffix := ""
-			alertStr := alertIndicatorStr(row)
-			if alertStr != "" {
+			if alertStr := alertIndicatorStr(row); alertStr != "" {
 				suffix = " " + m.styles.alertIndicator.Render(alertStr)
 				plainSuffix = " " + alertStr
-			}
-			displayTitle := paneDisplayTitle(row)
-			if displayTitle != "" {
-				cmdStr := truncateRight(displayTitle, 12)
-				suffix += " " + m.styles.commandDim.Render(cmdStr)
-				plainSuffix += " " + cmdStr
-			} else if row.currentCommand != "" && !isShellCommand(row.currentCommand) {
-				cmdStr := truncateRight(row.currentCommand, 12)
-				suffix += " " + m.styles.commandDim.Render(cmdStr)
-				plainSuffix += " " + cmdStr
 			}
 
 			// Layout: [indent 2][connector 1][ 1][dot 1][ 1][name][ 1][winStr][suffix]

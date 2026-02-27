@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +159,36 @@ func TestPaneDisplayTitle(t *testing.T) {
 				t.Fatalf("paneDisplayTitle(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRenderTreePaneShowsOnlyAlertIndicators(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:           "api/one",
+			Windows:        1,
+			CurrentCommand: "nvim",
+			PaneTitle:      "Claude Code",
+			AlertsActivity: true,
+		}},
+	}
+	m.rebuildRows()
+	m.setSelected(1)
+
+	got := m.renderTreePane(8, 60, 64, false)
+
+	if !strings.Contains(got, "#") {
+		t.Fatalf("tree view = %q, want activity indicator", got)
+	}
+	if strings.Contains(got, "Claude Code") {
+		t.Fatalf("tree view = %q, should not include pane title", got)
+	}
+	if strings.Contains(got, "nvim") {
+		t.Fatalf("tree view = %q, should not include current command", got)
 	}
 }
 
