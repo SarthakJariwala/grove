@@ -192,6 +192,40 @@ func TestRenderTreePaneShowsOnlyAlertIndicators(t *testing.T) {
 	}
 }
 
+func TestRenderDetailPaneSessionKeepsOnlyOperationalFields(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "SQL", Path: "/tmp/sql", Namespace: "sql"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:           "sql/sdk-configurability",
+			Windows:        2,
+			CurrentCommand: "node",
+			PaneTitle:      "amp - Architecture improvements",
+			LastActivity:   time.Now().Add(-17 * time.Minute).Unix(),
+			AlertsActivity: true,
+			HasAlerts:      true,
+		}},
+	}
+	m.rebuildRows()
+	m.setSelected(1)
+
+	got := m.renderDetailPane(20, 80, 84, false)
+
+	for _, removed := range []string{"Full name", "Folder:", "Path:"} {
+		if strings.Contains(got, removed) {
+			t.Fatalf("detail pane = %q, should not include %q", got, removed)
+		}
+	}
+
+	for _, keep := range []string{"Running", "Active", "activity", "node"} {
+		if !strings.Contains(got, keep) {
+			t.Fatalf("detail pane = %q, want %q", got, keep)
+		}
+	}
+}
+
 func TestLoadSessionsCmdGroupsAndEnriches(t *testing.T) {
 	t.Parallel()
 

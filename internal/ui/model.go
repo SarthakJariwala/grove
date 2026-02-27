@@ -145,11 +145,14 @@ type styleSet struct {
 	alertIndicator    lipgloss.Style
 
 	// Detail pane
-	detailName   lipgloss.Style
-	detailStatus lipgloss.Style
-	detailMeta   lipgloss.Style
-	infoLabel    lipgloss.Style
-	infoValue    lipgloss.Style
+	detailName    lipgloss.Style
+	detailMeta    lipgloss.Style
+	detailSection lipgloss.Style
+	infoLabel     lipgloss.Style
+	infoValue     lipgloss.Style
+	chipMuted     lipgloss.Style
+	chipPrimary   lipgloss.Style
+	chipWarn      lipgloss.Style
 
 	// Footer / help bar
 	helpKey    lipgloss.Style
@@ -197,11 +200,14 @@ func defaultStyles() styleSet {
 		alertIndicator:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)).Bold(true),
 
 		// Detail pane
-		detailName:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
-		detailStatus: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
-		detailMeta:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		infoLabel:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		infoValue:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
+		detailName:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
+		detailMeta:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		detailSection: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimaryDim)).Bold(true),
+		infoLabel:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		infoValue:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
+		chipMuted:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Background(lipgloss.Color(colorBgSubtle)).Padding(0, 1),
+		chipPrimary:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Background(lipgloss.Color(colorBgSubtle)).Padding(0, 1).Bold(true),
+		chipWarn:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)).Padding(0, 1).Bold(true),
 
 		// Footer / help bar
 		helpKey:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
@@ -874,15 +880,15 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 		sessions := append([]tmux.Session(nil), m.sessions[row.folderIndex]...)
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 
-		// Folder card
+		// Folder card — header
+		const lw = 13
 		lines = []string{
-			m.styles.detailName.Render(folder.Name),
-			m.styles.detailMeta.Render(folder.Namespace + " · " + fmt.Sprintf("%d sessions", len(sessions))),
+			m.styles.detailName.Render(folder.Name) + "  " + m.styles.detailMeta.Render(fmt.Sprintf("%d sessions", len(sessions))),
 			"",
-			m.kv("Path", truncateMiddle(folder.Path, maxWidth-6)),
+			m.kvPad("Path", lw, m.styles.infoValue.Render(truncateMiddle(folder.Path, maxWidth-lw))),
 		}
 		if folder.DefaultCommand != "" {
-			lines = append(lines, m.kv("Command", truncateRight(folder.DefaultCommand, maxWidth-10)))
+			lines = append(lines, m.kvPad("Command", lw, m.styles.infoValue.Render(truncateRight(folder.DefaultCommand, maxWidth-lw))))
 		}
 
 		if len(sessions) > 0 {
@@ -922,7 +928,8 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 				lines = append(lines, m.styles.detailMeta.Render(strings.Join(parts, ", ")))
 			}
 
-			lines = append(lines, "", m.styles.infoLabel.Render("Sessions"))
+			lines = append(lines, "")
+			lines = append(lines, m.styles.infoLabel.Render("Sessions"))
 			for _, s := range sessions {
 				dot := m.styles.statusDotDetached.Render("○")
 				if s.Attached {
@@ -939,51 +946,62 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 			lines = append(lines, "", m.styles.emptyHint.Render("press n to create a session"))
 		}
 	} else {
-		folder := m.cfg.Folders[row.folderIndex]
-
-		// Session card
-		var statusLine string
+		// Session card — header
+		statusText := m.styles.detailMeta.Render("○ detached")
 		if row.status == "attached" {
-			statusLine = m.styles.statusDotAttached.Render("●") + " " + m.styles.detailStatus.Render("attached")
-		} else {
-			statusLine = m.styles.statusDotDetached.Render("○") + " " + m.styles.detailMeta.Render("detached")
+			statusText = m.styles.chipPrimary.Render("● attached")
 		}
-		statusLine += m.styles.detailMeta.Render(fmt.Sprintf(" · %d windows", row.windows))
+		windowLabel := "windows"
+		if row.windows == 1 {
+			windowLabel = "window"
+		}
+		winInfo := fmt.Sprintf("%d %s", row.windows, windowLabel)
 
 		lines = []string{
 			m.styles.detailName.Render(truncateRight(row.leafName, maxWidth)),
-			statusLine,
-			"",
-			m.kv("Full name", truncateRight(row.sessionName, maxWidth-12)),
-			m.kv("Folder", truncateRight(folder.Name, maxWidth-9)),
-			m.kv("Path", truncateMiddle(folder.Path, maxWidth-6)),
+			statusText + m.styles.detailMeta.Render("  ·  "+winInfo),
+			m.dividerLine(maxWidth),
 		}
 
-		if row.currentCommand != "" {
-			lines = append(lines, m.kv("Running", truncateRight(row.currentCommand, maxWidth-10)))
+		// Key-value info section
+		const lw = 13
+
+		running := strings.TrimSpace(row.currentCommand)
+		if running == "" || isShellCommand(running) {
+			lines = append(lines, m.kvPad("Running", lw, m.styles.detailMeta.Render("shell idle")))
+		} else {
+			lines = append(lines, m.kvPad("Running", lw, m.styles.infoValue.Render(truncateRight(running, maxWidth-lw))))
 		}
+
 		if title := paneDisplayTitle(row); title != "" {
-			lines = append(lines, m.kv("Title", truncateRight(title, maxWidth-8)))
+			lines = append(lines, m.kvPad("Title", lw, m.styles.infoValue.Render(truncateRight(title, maxWidth-lw))))
 		}
+
+		lines = append(lines, "")
 		if row.lastActivity > 0 {
 			d := time.Since(time.Unix(row.lastActivity, 0))
-			lines = append(lines, m.kv("Last active", formatDuration(d)))
+			lines = append(lines, m.kvPad("Active", lw, m.styles.infoValue.Render(formatDuration(d))))
+		} else {
+			lines = append(lines, m.kvPad("Active", lw, m.styles.detailMeta.Render("unknown")))
 		}
+
+		// Alerts — only shown when present
 		if row.hasAlerts {
-			var alertParts []string
+			lines = append(lines, m.dividerLine(maxWidth))
+			chips := make([]string, 0, 3)
 			if row.alertsBell {
-				alertParts = append(alertParts, "bell (!)")
+				chips = append(chips, m.styles.chipWarn.Render("! bell"))
 			}
 			if row.alertsActivity {
-				alertParts = append(alertParts, "activity (#)")
+				chips = append(chips, m.styles.chipWarn.Render("# activity"))
 			}
 			if row.alertsSilence {
-				alertParts = append(alertParts, "silence (~)")
+				chips = append(chips, m.styles.chipWarn.Render("~ silence"))
 			}
-			if len(alertParts) == 0 {
-				alertParts = append(alertParts, "alerts pending")
+			if len(chips) == 0 {
+				chips = append(chips, m.styles.chipWarn.Render("alerts"))
 			}
-			lines = append(lines, m.styles.alertIndicator.Render(alertIndicatorStr(row)+" ")+strings.Join(alertParts, ", "))
+			lines = append(lines, strings.Join(chips, " "))
 		}
 	}
 
@@ -1524,6 +1542,21 @@ func (m Model) totalManagedSessions() int {
 
 func (m Model) kv(label, value string) string {
 	return m.styles.infoLabel.Render(label+": ") + m.styles.infoValue.Render(value)
+}
+
+func (m Model) dividerLine(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	return m.styles.divider.Render(strings.Repeat("─", width))
+}
+
+func (m Model) kvPad(label string, padTo int, value string) string {
+	pad := padTo - len(label)
+	if pad < 1 {
+		pad = 1
+	}
+	return m.styles.infoLabel.Render(label+strings.Repeat(" ", pad)) + value
 }
 
 func truncateRight(s string, max int) string {
