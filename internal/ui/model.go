@@ -764,10 +764,28 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 	rows := make([]string, 0, len(m.rows))
 	start, end := windowAround(m.selected, len(m.rows), bodyHeight)
 
+	visualLines := 0
+	actualEnd := end
 	for i := start; i < end; i++ {
 		row := m.rows[i]
 		isSelected := i == m.selected
 		isKillTarget := m.confirmKillTarget != "" && row.sessionName == m.confirmKillTarget
+
+		// Add blank line before each folder group (including the first for spacing after title)
+		if row.typeOf == rowFolder {
+			visualLines++
+			if visualLines > bodyHeight {
+				actualEnd = i
+				break
+			}
+			rows = append(rows, "")
+		}
+
+		visualLines++
+		if visualLines > bodyHeight {
+			actualEnd = i
+			break
+		}
 
 		if row.typeOf == rowFolder {
 			folder := m.cfg.Folders[row.folderIndex]
@@ -831,8 +849,8 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 	if start > 0 {
 		body = m.styles.headerMeta.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n" + body
 	}
-	if end < len(m.rows) {
-		body += "\n" + m.styles.headerMeta.Render(fmt.Sprintf("  ↓ %d more", len(m.rows)-end))
+	if actualEnd < len(m.rows) {
+		body += "\n" + m.styles.headerMeta.Render(fmt.Sprintf("  ↓ %d more", len(m.rows)-actualEnd))
 	}
 
 	title := m.styles.paneTitle.Render("Sessions")
