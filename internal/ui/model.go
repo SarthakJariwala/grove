@@ -136,6 +136,7 @@ type styleSet struct {
 	rowSelectedText lipgloss.Style
 	selAccent       lipgloss.Style // left accent bar for selection
 	rowKillTarget   lipgloss.Style // red highlight for kill confirmation
+	rowDim          lipgloss.Style // dimmed row when prompt is active
 
 	// Status indicators
 	statusDotAttached lipgloss.Style
@@ -191,6 +192,7 @@ func defaultStyles() styleSet {
 		rowSelectedText: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
 		selAccent:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
 		rowKillTarget:   lipgloss.NewStyle().Background(lipgloss.Color("#3d1214")),
+		rowDim:          lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Faint(true),
 
 		// Status indicators
 		statusDotAttached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
@@ -793,7 +795,9 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 			text := fmt.Sprintf("▸ %s (%d)", folder.Name, count)
 			text = truncateRight(text, maxWidth-2)
 
-			if isSelected {
+			if dim {
+				rows = append(rows, " "+m.styles.rowDim.Render(text))
+			} else if isSelected {
 				rows = append(rows, m.selectedLine("▎"+text, maxWidth))
 			} else {
 				rows = append(rows, " "+m.styles.rowFolder.Render(text))
@@ -827,7 +831,10 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 			}
 			name := truncateRight(row.leafName, nameMax)
 
-			if isSelected {
+			if dim {
+				plain := "  " + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
+				rows = append(rows, m.styles.rowDim.Render(plain))
+			} else if isSelected {
 				plain := "▎" + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
 				rows = append(rows, m.selectedLine(plain, maxWidth))
 			} else if isKillTarget {

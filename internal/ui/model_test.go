@@ -1,16 +1,26 @@
 package ui
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/SarthakJariwala/grove/internal/config"
 	"github.com/SarthakJariwala/grove/internal/tmux"
 )
+
+func TestMain(m *testing.M) {
+	lipgloss.SetDefaultRenderer(
+		lipgloss.NewRenderer(os.Stderr, termenv.WithProfile(termenv.TrueColor)),
+	)
+	os.Exit(m.Run())
+}
 
 type fakeSessionManager struct {
 	listSessionsFn func() ([]tmux.Session, error)
@@ -305,3 +315,56 @@ type assertErr string
 func (e assertErr) Error() string { return string(e) }
 
 var _ tea.Msg = sessionsLoadedMsg{}
+
+func TestRenderTreePaneDimSessionRows(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:     "api/service",
+			Windows:  2,
+			Attached: true,
+		}},
+	}
+	m.rebuildRows()
+
+	normal := m.renderTreePane(8, 60, 64, false)
+	dimmed := m.renderTreePane(8, 60, 64, true)
+
+	if normal == dimmed {
+		t.Fatal("dim=true output should differ from dim=false output")
+	}
+
+	// #73daca in truecolor ANSI = 38;2;115;218;202
+	colorGreen := "38;2;115;218;202"
+	if strings.Contains(dimmed, colorGreen) {
+		t.Fatalf("dimmed tree pane should not contain bright green (%s), got:\n%s", colorGreen, dimmed)
+	}
+}
+
+func TestRenderTreePaneDimFolderRows(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{
+		{Name: "API", Path: "/tmp/api", Namespace: "api"},
+		{Name: "Web", Path: "/tmp/web", Namespace: "web"},
+	}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{Name: "api/one", Windows: 1}},
+		1: {},
+	}
+	m.rebuildRows()
+	// Select the first folder so the second folder is non-selected
+	m.setSelected(0)
+
+	dimmed := m.renderTreePane(8, 60, 64, true)
+
+	// #c9d1d9 in truecolor ANSI = 38;2;201;209;217
+	colorText := "38;2;201;209;217"
+	if strings.Contains(dimmed, colorText) {
+		t.Fatalf("dimmed tree pane should not contain folder text color (%s), got:\n%s", colorText, dimmed)
+	}
+}
