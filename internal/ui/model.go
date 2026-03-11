@@ -92,24 +92,28 @@ type Model struct {
 	width  int
 	height int
 
-	rows      []treeRow
-	selected  int
-	sessions  map[int][]tmux.Session
-	statusMsg string
-	statusSeq int
-	errMsg    string
+	rows           []treeRow
+	selected       int
+	sessions       map[int][]tmux.Session
+	sessionWindows map[string][]int
+	activeWindows  map[string]int
+	statusMsg      string
+	statusSeq      int
+	errMsg         string
 
 	filterQuery       string
 	confirmKillTarget string
 	detailScroll      int
 
-	detailMode     detailMode
-	previewTarget  string
-	previewContent string
-	previewLoading bool
-	previewErr     error
-	previewSeq     int
-	previewZoomed  bool
+	detailMode      detailMode
+	previewSession  string
+	previewWindow   int
+	previewContent  string
+	previewLoading  bool
+	previewErr      error
+	previewSeq      int
+	previewZoomed   bool
+	previewInFlight bool
 
 	prompt        textinput.Model
 	promptMode    promptMode
@@ -230,8 +234,11 @@ func defaultStyles() styleSet {
 }
 
 type sessionsLoadedMsg struct {
-	sessions map[int][]tmux.Session
-	err      error
+	sessions       map[int][]tmux.Session
+	sessionWindows map[string][]int
+	activeWindows  map[string]int
+	panesFresh     bool
+	err            error
 }
 
 type actionResultMsg struct {
@@ -273,8 +280,11 @@ func NewModel(cfg config.Config, cfgPath string, client tmux.SessionManager) Mod
 		client:  client,
 		styles:  defaultStyles(),
 
-		sessions: map[int][]tmux.Session{},
-		prompt:   t,
+		sessions:       map[int][]tmux.Session{},
+		sessionWindows: map[string][]int{},
+		activeWindows:  map[string]int{},
+		previewWindow:  -1,
+		prompt:         t,
 	}
 	m.rebuildRows()
 	return m
@@ -414,8 +424,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.sessions = msg.sessions
+		if msg.panesFresh {
+			m.sessionWindows = msg.sessionWindows
+			m.activeWindows = msg.activeWindows
+		}
 		m.rebuildRows()
 		m.errMsg = ""
+		if m.detailMode == detailPreview {
+			return m, m.reconcilePreviewAfterLoad()
+		}
 		return m, nil
 
 	case actionResultMsg:
@@ -444,9 +461,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
 
 	case paneCapturedMsg:
-		if msg.seq != m.previewSeq {
+		if m.detailMode != detailPreview {
 			return m, nil
 		}
+		if msg.seq != m.previewSeq || msg.target != m.previewCaptureTarget() {
+			return m, nil
+		}
+		m.previewInFlight = false
 		m.previewLoading = false
 		if msg.err != nil {
 			m.previewErr = msg.err
@@ -461,10 +482,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.detailMode != detailPreview {
 			return m, nil
 		}
-		return m, tea.Batch(
-			m.capturePaneCmd(m.previewTarget, m.previewSeq),
-			previewTickCmd(),
-		)
+		if m.previewInFlight {
+			return m, previewTickCmd()
+		}
+		return m, tea.Batch(m.beginPreviewCapture(false), previewTickCmd())
 
 	case folderAddedMsg:
 		if msg.err != nil {
@@ -623,8 +644,10 @@ func (m Model) renderHelpBar() string {
 			zoomHint = "zoom out"
 		}
 		bindings = []binding{
+			{"←/→", "window"},
 			{"⏎", "attach"},
 			{"z", zoomHint},
+			{"r", "refresh"},
 			{"esc", "back"},
 			{"q", "quit"},
 		}
@@ -894,7 +917,7 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 
 	row := m.rows[m.selected]
 
-	if m.detailMode == detailPreview && row.typeOf == rowSession {
+	if m.detailMode == detailPreview {
 		return m.renderPreviewPane(innerH, maxWidth, paneWidth, dim)
 	}
 
@@ -1095,9 +1118,31 @@ func wrapLines(lines []string, maxWidth int) []string {
 }
 
 func (m Model) renderPreviewPane(innerH, maxWidth, paneWidth int, dim bool) string {
-	row, _ := m.selectedSessionRow()
-	title := m.styles.paneTitle.Render("Preview") +
-		" " + m.styles.detailMeta.Render(row.sessionName)
+	sessionName := m.previewSession
+	if sessionName == "" {
+		if row, ok := m.selectedSessionRow(); ok {
+			sessionName = row.sessionName
+		}
+	}
+
+	titleMeta := sessionName
+	if sessionName != "" && m.previewWindow >= 0 {
+		titleMeta = fmt.Sprintf("%s · win %d", sessionName, m.previewWindow)
+		if windows := m.sessionWindows[sessionName]; len(windows) > 0 {
+			if pos := indexOfInt(windows, m.previewWindow); pos >= 0 {
+				titleMeta = fmt.Sprintf("%s · win %d (%d/%d)", sessionName, m.previewWindow, pos+1, len(windows))
+			}
+		}
+	}
+
+	title := m.styles.paneTitle.Render("Preview")
+	if titleMeta != "" {
+		metaWidth := maxWidth - 10
+		if metaWidth < 10 {
+			metaWidth = 10
+		}
+		title += " " + m.styles.detailMeta.Render(truncateRight(titleMeta, metaWidth))
+	}
 
 	if m.previewLoading {
 		padded := padToHeight(title+"\n\n"+m.styles.emptyHint.Render("capturing pane…"), innerH)
@@ -1123,7 +1168,12 @@ func (m Model) renderPreviewPane(innerH, maxWidth, paneWidth int, dim bool) stri
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
 		if len(m.cfg.Folders) == 0 {
-			return sessionsLoadedMsg{sessions: map[int][]tmux.Session{}}
+			return sessionsLoadedMsg{
+				sessions:       map[int][]tmux.Session{},
+				sessionWindows: map[string][]int{},
+				activeWindows:  map[string]int{},
+				panesFresh:     true,
+			}
 		}
 
 		sessions, err := m.client.ListSessions()
@@ -1131,9 +1181,13 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 			return sessionsLoadedMsg{err: err}
 		}
 
-		// Fetch pane info for commands, titles, and alert flags (graceful degradation on failure)
+		// Fetch pane info for commands, titles, alert flags, and preview window navigation
+		paneDataFresh := false
+		sessionWindows := map[string][]int{}
+		activeWindows := map[string]int{}
 		panes, paneErr := m.client.ListPanes()
 		if paneErr == nil {
+			paneDataFresh = true
 			states := tmux.ActivePaneStates(panes)
 			for i := range sessions {
 				if st, ok := states[sessions[i].Name]; ok {
@@ -1151,6 +1205,8 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 					}
 				}
 			}
+			sessionWindows = tmux.SessionWindowIndexes(panes)
+			activeWindows = tmux.ActiveWindowIndexes(panes)
 		}
 
 		grouped := map[int][]tmux.Session{}
@@ -1164,7 +1220,12 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 			}
 		}
 
-		return sessionsLoadedMsg{sessions: grouped}
+		return sessionsLoadedMsg{
+			sessions:       grouped,
+			sessionWindows: sessionWindows,
+			activeWindows:  activeWindows,
+			panesFresh:     paneDataFresh,
+		}
 	}
 }
 
@@ -1228,24 +1289,31 @@ func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.previewZoomed = false
 			return m, nil
 		}
-		m.detailMode = detailNormal
+		m.exitPreview()
 		return m, nil
+	case "left":
+		return m, m.movePreviewWindow(-1)
+	case "right":
+		return m, m.movePreviewWindow(1)
 	case "z":
 		m.previewZoomed = !m.previewZoomed
 		m.detailScroll = 0
 		return m, nil
 	case "r":
-		return m, m.capturePaneCmd(m.previewTarget, m.previewSeq)
+		return m, m.beginPreviewCapture(true)
 	case "enter":
-		row, ok := m.selectedSessionRow()
-		if !ok {
-			return m, nil
+		target := m.previewSession
+		if target == "" {
+			row, ok := m.selectedSessionRow()
+			if !ok {
+				return m, nil
+			}
+			target = row.sessionName
 		}
-		m.detailMode = detailNormal
-		m.previewZoomed = false
-		m.statusMsg = "attached to " + row.sessionName + " (detach with Ctrl-b d)"
+		m.exitPreview()
+		m.statusMsg = "attached to " + target + " (detach with Ctrl-b d)"
 		m.errMsg = ""
-		return m, tea.ExecProcess(m.client.AttachCommand(row.sessionName), func(err error) tea.Msg {
+		return m, tea.ExecProcess(m.client.AttachCommand(target), func(err error) tea.Msg {
 			return attachedMsg{err: err}
 		})
 	}
@@ -1503,6 +1571,15 @@ func (m *Model) setStatus(msg string) tea.Cmd {
 
 func containsAny(a, b, c, needle string) bool {
 	return strings.Contains(a, needle) || strings.Contains(b, needle) || strings.Contains(c, needle)
+}
+
+func indexOfInt(values []int, needle int) int {
+	for i, v := range values {
+		if v == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Model) setSelected(next int) {
@@ -1832,17 +1909,154 @@ func (m Model) openEditorInDir(cmdStr string, dir string) tea.Cmd {
 func (m *Model) startPreview() tea.Cmd {
 	row, ok := m.selectedSessionRow()
 	if !ok {
-		m.detailMode = detailNormal
+		m.exitPreview()
 		return nil
 	}
+	m.previewSession = row.sessionName
+	m.previewWindow = -1
+	if windows := m.sessionWindows[row.sessionName]; len(windows) > 0 {
+		if active, ok := m.activeWindows[row.sessionName]; ok && indexOfInt(windows, active) >= 0 {
+			m.previewWindow = active
+		} else {
+			m.previewWindow = windows[0]
+		}
+	}
 	m.previewSeq++
-	m.previewTarget = row.sessionName
-	m.previewLoading = true
+	m.previewInFlight = false
+	m.previewLoading = false
 	m.previewErr = nil
 	m.previewContent = ""
 	m.detailScroll = 0
 	m.previewZoomed = false
-	return m.capturePaneCmd(row.sessionName, m.previewSeq)
+	return m.beginPreviewCapture(true)
+}
+
+func (m *Model) reconcilePreviewAfterLoad() tea.Cmd {
+	if m.previewSession == "" {
+		m.exitPreview()
+		return nil
+	}
+	if !m.sessionExists(m.previewSession) {
+		m.exitPreview()
+		return m.setStatus("preview closed: session ended")
+	}
+
+	windows := m.sessionWindows[m.previewSession]
+	if len(windows) == 0 {
+		if m.previewWindow == -1 {
+			return nil
+		}
+		m.previewWindow = -1
+		m.previewSeq++
+		return m.beginPreviewCapture(true)
+	}
+
+	if indexOfInt(windows, m.previewWindow) >= 0 {
+		return nil
+	}
+
+	if m.previewWindow < 0 {
+		if active, ok := m.activeWindows[m.previewSession]; ok && indexOfInt(windows, active) >= 0 {
+			m.previewWindow = active
+		} else {
+			m.previewWindow = windows[0]
+		}
+	} else {
+		replacement := windows[len(windows)-1]
+		for _, win := range windows {
+			if win >= m.previewWindow {
+				replacement = win
+				break
+			}
+		}
+		m.previewWindow = replacement
+	}
+
+	m.previewSeq++
+	return m.beginPreviewCapture(true)
+}
+
+func (m *Model) movePreviewWindow(delta int) tea.Cmd {
+	if delta == 0 || m.previewSession == "" {
+		return nil
+	}
+	windows := m.sessionWindows[m.previewSession]
+	if len(windows) <= 1 {
+		return nil
+	}
+
+	cur := indexOfInt(windows, m.previewWindow)
+	if cur < 0 {
+		if active, ok := m.activeWindows[m.previewSession]; ok {
+			cur = indexOfInt(windows, active)
+		}
+		if cur < 0 {
+			cur = 0
+		}
+	}
+
+	next := cur + delta
+	n := len(windows)
+	next %= n
+	if next < 0 {
+		next += n
+	}
+
+	newWindow := windows[next]
+	if newWindow == m.previewWindow {
+		return nil
+	}
+
+	m.previewWindow = newWindow
+	m.previewSeq++
+	m.detailScroll = 0
+	return m.beginPreviewCapture(true)
+}
+
+func (m *Model) beginPreviewCapture(showLoading bool) tea.Cmd {
+	target := m.previewCaptureTarget()
+	if target == "" {
+		return nil
+	}
+	m.previewInFlight = true
+	if showLoading {
+		m.previewLoading = true
+		m.previewErr = nil
+		m.previewContent = ""
+	}
+	return m.capturePaneCmd(target, m.previewSeq)
+}
+
+func (m Model) previewCaptureTarget() string {
+	if m.previewSession == "" {
+		return ""
+	}
+	if m.previewWindow >= 0 {
+		return fmt.Sprintf("%s:%d", m.previewSession, m.previewWindow)
+	}
+	return m.previewSession
+}
+
+func (m *Model) exitPreview() {
+	m.detailMode = detailNormal
+	m.previewSession = ""
+	m.previewWindow = -1
+	m.previewLoading = false
+	m.previewErr = nil
+	m.previewContent = ""
+	m.previewZoomed = false
+	m.previewInFlight = false
+}
+
+func (m Model) sessionExists(name string) bool {
+	for _, sessions := range m.sessions {
+		for _, session := range sessions {
+			if session.Name == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m Model) capturePaneCmd(target string, seq int) tea.Cmd {

@@ -25,6 +25,7 @@ func TestMain(m *testing.M) {
 type fakeSessionManager struct {
 	listSessionsFn func() ([]tmux.Session, error)
 	listPanesFn    func() ([]tmux.PaneInfo, error)
+	capturePaneFn  func(target string) (string, error)
 }
 
 func (f fakeSessionManager) ListSessions() ([]tmux.Session, error) {
@@ -49,7 +50,12 @@ func (f fakeSessionManager) RenameSession(oldName, newName string) error { retur
 
 func (f fakeSessionManager) KillSession(name string) error { return nil }
 
-func (f fakeSessionManager) CapturePane(session string) (string, error) { return "", nil }
+func (f fakeSessionManager) CapturePane(target string) (string, error) {
+	if f.capturePaneFn == nil {
+		return "", nil
+	}
+	return f.capturePaneFn(target)
+}
 
 func (f fakeSessionManager) AttachCommand(name string) *exec.Cmd {
 	return exec.Command("sh", "-c", "true")
@@ -307,6 +313,147 @@ func TestLoadSessionsCmdError(t *testing.T) {
 	}
 	if loaded.err == nil || loaded.err.Error() != "boom" {
 		t.Fatalf("sessionsLoadedMsg.err = %v, want boom", loaded.err)
+	}
+}
+
+func TestStartPreviewUsesActiveWindowTarget(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{
+		capturePaneFn: func(target string) (string, error) {
+			return "captured:" + target, nil
+		},
+	})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/one"}}}
+	m.sessionWindows = map[string][]int{"api/one": {0, 2, 5}}
+	m.activeWindows = map[string]int{"api/one": 2}
+	m.rebuildRows()
+	m.setSelected(1)
+
+	cmd := m.startPreview()
+	if m.previewSession != "api/one" {
+		t.Fatalf("previewSession = %q, want api/one", m.previewSession)
+	}
+	if m.previewWindow != 2 {
+		t.Fatalf("previewWindow = %d, want 2", m.previewWindow)
+	}
+	if cmd == nil {
+		t.Fatal("startPreview() returned nil command")
+	}
+
+	msg := cmd()
+	captured, ok := msg.(paneCapturedMsg)
+	if !ok {
+		t.Fatalf("capture cmd returned %T, want paneCapturedMsg", msg)
+	}
+	if captured.target != "api/one:2" {
+		t.Fatalf("captured target = %q, want api/one:2", captured.target)
+	}
+}
+
+func TestMovePreviewWindowWrapsSparseIndexes(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+	m.previewSession = "api/one"
+	m.previewWindow = 0
+	m.previewSeq = 1
+	m.sessionWindows = map[string][]int{"api/one": {0, 2, 5}}
+
+	cmd := m.movePreviewWindow(-1)
+	if m.previewWindow != 5 {
+		t.Fatalf("previewWindow after left = %d, want 5", m.previewWindow)
+	}
+	if m.previewSeq != 2 {
+		t.Fatalf("previewSeq after left = %d, want 2", m.previewSeq)
+	}
+	if cmd == nil {
+		t.Fatal("movePreviewWindow(-1) returned nil command")
+	}
+	if msg, ok := cmd().(paneCapturedMsg); !ok || msg.target != "api/one:5" {
+		t.Fatalf("left capture = %#v, want target api/one:5", msg)
+	}
+
+	cmd = m.movePreviewWindow(1)
+	if m.previewWindow != 0 {
+		t.Fatalf("previewWindow after right = %d, want 0", m.previewWindow)
+	}
+	if m.previewSeq != 3 {
+		t.Fatalf("previewSeq after right = %d, want 3", m.previewSeq)
+	}
+	if cmd == nil {
+		t.Fatal("movePreviewWindow(1) returned nil command")
+	}
+	if msg, ok := cmd().(paneCapturedMsg); !ok || msg.target != "api/one:0" {
+		t.Fatalf("right capture = %#v, want target api/one:0", msg)
+	}
+}
+
+func TestReconcilePreviewWindowClampsWhenWindowRemoved(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+	m.detailMode = detailPreview
+	m.previewSession = "api/one"
+	m.previewWindow = 2
+	m.previewSeq = 10
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/one"}}}
+	m.sessionWindows = map[string][]int{"api/one": {0, 5}}
+
+	cmd := m.reconcilePreviewAfterLoad()
+	if m.previewWindow != 5 {
+		t.Fatalf("previewWindow = %d, want 5", m.previewWindow)
+	}
+	if m.previewSeq != 11 {
+		t.Fatalf("previewSeq = %d, want 11", m.previewSeq)
+	}
+	if cmd == nil {
+		t.Fatal("reconcilePreviewAfterLoad() returned nil command")
+	}
+	if msg, ok := cmd().(paneCapturedMsg); !ok || msg.target != "api/one:5" {
+		t.Fatalf("reconcile capture = %#v, want target api/one:5", msg)
+	}
+}
+
+func TestReconcilePreviewExitsWhenSessionRemoved(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+	m.detailMode = detailPreview
+	m.previewSession = "api/one"
+	m.previewWindow = 1
+	m.sessions = map[int][]tmux.Session{}
+
+	cmd := m.reconcilePreviewAfterLoad()
+	if cmd == nil {
+		t.Fatal("reconcilePreviewAfterLoad() should return status clear command")
+	}
+	if m.detailMode != detailNormal {
+		t.Fatalf("detailMode = %v, want detailNormal", m.detailMode)
+	}
+	if m.previewSession != "" {
+		t.Fatalf("previewSession = %q, want empty", m.previewSession)
+	}
+	if m.statusMsg != "preview closed: session ended" {
+		t.Fatalf("statusMsg = %q, want preview closed message", m.statusMsg)
+	}
+}
+
+func TestPaneCapturedMsgIgnoresStalePreviewTarget(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+	m.detailMode = detailPreview
+	m.previewSession = "api/one"
+	m.previewWindow = 2
+	m.previewSeq = 4
+	m.previewContent = "fresh"
+
+	updated, _ := m.Update(paneCapturedMsg{target: "api/one:0", content: "stale", seq: 3})
+	got := updated.(Model)
+	if got.previewContent != "fresh" {
+		t.Fatalf("previewContent = %q, want fresh", got.previewContent)
 	}
 }
 

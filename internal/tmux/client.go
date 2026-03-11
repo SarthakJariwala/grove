@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -43,7 +44,7 @@ type SessionManager interface {
 	SendKeys(target, command string) error
 	RenameSession(oldName, newName string) error
 	KillSession(name string) error
-	CapturePane(session string) (string, error)
+	CapturePane(target string) (string, error)
 	AttachCommand(name string) *exec.Cmd
 }
 
@@ -211,6 +212,38 @@ func ActivePaneStates(panes []PaneInfo) map[string]ActivePaneState {
 	return result
 }
 
+func SessionWindowIndexes(panes []PaneInfo) map[string][]int {
+	windowSet := make(map[string]map[int]struct{})
+	for _, p := range panes {
+		if _, ok := windowSet[p.SessionName]; !ok {
+			windowSet[p.SessionName] = make(map[int]struct{})
+		}
+		windowSet[p.SessionName][p.WindowIndex] = struct{}{}
+	}
+
+	result := make(map[string][]int, len(windowSet))
+	for sessionName, indexes := range windowSet {
+		list := make([]int, 0, len(indexes))
+		for idx := range indexes {
+			list = append(list, idx)
+		}
+		sort.Ints(list)
+		result[sessionName] = list
+	}
+
+	return result
+}
+
+func ActiveWindowIndexes(panes []PaneInfo) map[string]int {
+	result := make(map[string]int)
+	for _, p := range panes {
+		if p.WindowActive {
+			result[p.SessionName] = p.WindowIndex
+		}
+	}
+	return result
+}
+
 // stripTitleBranding removes common app-branding prefixes from pane titles
 // (e.g. Claude Code's ✳ prefix) for cleaner display.
 func stripTitleBranding(title string) string {
@@ -258,8 +291,8 @@ func (c *Client) KillSession(name string) error {
 	return nil
 }
 
-func (c *Client) CapturePane(session string) (string, error) {
-	cmd := execCommand("tmux", "capture-pane", "-e", "-t", session, "-p")
+func (c *Client) CapturePane(target string) (string, error) {
+	cmd := execCommand("tmux", "capture-pane", "-e", "-t", target, "-p")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane: %w (%s)", err, strings.TrimSpace(string(out)))

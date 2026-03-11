@@ -42,6 +42,7 @@ Just run `grove` after install and it will walk you through its configuration.
 | `↓` / `j`       | Move down                                                |
 | `Enter`          | Attach to selected session                              |
 | `v`              | Preview selected session (live)                         |
+| `←` / `→`       | Cycle session windows (in preview mode)                 |
 | `z`              | Zoom in/out preview pane (in preview mode)              |
 | `n`              | Create new session under the selected folder            |
 | `R`              | Rename selected session                                 |

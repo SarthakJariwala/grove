@@ -150,6 +150,44 @@ func TestActivePaneStates(t *testing.T) {
 	}
 }
 
+func TestSessionWindowIndexes(t *testing.T) {
+	t.Parallel()
+
+	panes := []PaneInfo{
+		{SessionName: "api/one", WindowIndex: 2},
+		{SessionName: "api/one", WindowIndex: 0},
+		{SessionName: "api/one", WindowIndex: 2},
+		{SessionName: "api/one", WindowIndex: 5},
+		{SessionName: "web/two", WindowIndex: 1},
+	}
+
+	indexes := SessionWindowIndexes(panes)
+	if got := fmt.Sprint(indexes["api/one"]); got != "[0 2 5]" {
+		t.Fatalf("api/one windows = %s, want [0 2 5]", got)
+	}
+	if got := fmt.Sprint(indexes["web/two"]); got != "[1]" {
+		t.Fatalf("web/two windows = %s, want [1]", got)
+	}
+}
+
+func TestActiveWindowIndexes(t *testing.T) {
+	t.Parallel()
+
+	panes := []PaneInfo{
+		{SessionName: "api/one", WindowIndex: 2, WindowActive: true},
+		{SessionName: "api/one", WindowIndex: 1, WindowActive: false},
+		{SessionName: "web/two", WindowIndex: 3, WindowActive: false},
+	}
+
+	active := ActiveWindowIndexes(panes)
+	if got, ok := active["api/one"]; !ok || got != 2 {
+		t.Fatalf("api/one active window = %d, ok=%v, want 2,true", got, ok)
+	}
+	if _, ok := active["web/two"]; ok {
+		t.Fatalf("web/two should not have an active window entry")
+	}
+}
+
 func stubExecCommand(t *testing.T, fn func(name string, args ...string) *exec.Cmd) func() {
 	t.Helper()
 	old := execCommand

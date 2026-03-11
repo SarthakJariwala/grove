@@ -11,7 +11,9 @@ import (
 )
 
 type trackingSessionManager struct {
-	killed []string
+	killed   []string
+	captured []string
+	attached []string
 }
 
 func (f *trackingSessionManager) ListSessions() ([]tmux.Session, error) { return nil, nil }
@@ -29,9 +31,13 @@ func (f *trackingSessionManager) KillSession(name string) error {
 	return nil
 }
 
-func (f *trackingSessionManager) CapturePane(session string) (string, error) { return "", nil }
+func (f *trackingSessionManager) CapturePane(target string) (string, error) {
+	f.captured = append(f.captured, target)
+	return "", nil
+}
 
 func (f *trackingSessionManager) AttachCommand(name string) *exec.Cmd {
+	f.attached = append(f.attached, name)
 	return exec.Command("sh", "-c", "true")
 }
 
@@ -111,5 +117,67 @@ func TestUpdateNOpensNewSessionPrompt(t *testing.T) {
 
 	if got.promptMode != promptNewSession {
 		t.Fatalf("promptMode = %v, want promptNewSession", got.promptMode)
+	}
+}
+
+func TestUpdatePreviewLeftRightCyclesWindows(t *testing.T) {
+	t.Parallel()
+
+	fake := &trackingSessionManager{}
+	m := NewModel(config.Config{}, "config.toml", fake)
+	m.detailMode = detailPreview
+	m.previewSession = "api/one"
+	m.previewWindow = 0
+	m.previewSeq = 1
+	m.sessionWindows = map[string][]int{"api/one": {0, 2, 5}}
+
+	model, cmd := m.updatePreview(tea.KeyMsg{Type: tea.KeyRight})
+	got := model.(Model)
+	if got.previewWindow != 2 {
+		t.Fatalf("previewWindow after right = %d, want 2", got.previewWindow)
+	}
+	if cmd == nil {
+		t.Fatal("expected capture command for right navigation")
+	}
+	_ = cmd()
+	if len(fake.captured) != 1 || fake.captured[0] != "api/one:2" {
+		t.Fatalf("captured targets = %#v, want [api/one:2]", fake.captured)
+	}
+
+	model, cmd = got.updatePreview(tea.KeyMsg{Type: tea.KeyLeft})
+	got = model.(Model)
+	if got.previewWindow != 0 {
+		t.Fatalf("previewWindow after left = %d, want 0", got.previewWindow)
+	}
+	if cmd == nil {
+		t.Fatal("expected capture command for left navigation")
+	}
+	_ = cmd()
+	if len(fake.captured) != 2 || fake.captured[1] != "api/one:0" {
+		t.Fatalf("captured targets = %#v, want second target api/one:0", fake.captured)
+	}
+}
+
+func TestPreviewEnterAttachesPreviewSession(t *testing.T) {
+	t.Parallel()
+
+	fake := &trackingSessionManager{}
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fake)
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/one"}}}
+	m.rebuildRows()
+	m.setSelected(0) // folder row, to ensure preview attach does not rely on selected session row
+	m.detailMode = detailPreview
+	m.previewSession = "api/one"
+
+	model, cmd := m.updatePreview(tea.KeyMsg{Type: tea.KeyEnter})
+	got := model.(Model)
+	if cmd == nil {
+		t.Fatal("expected attach command")
+	}
+	if got.detailMode != detailNormal {
+		t.Fatalf("detailMode = %v, want detailNormal", got.detailMode)
+	}
+	if len(fake.attached) != 1 || fake.attached[0] != "api/one" {
+		t.Fatalf("attached targets = %#v, want [api/one]", fake.attached)
 	}
 }
