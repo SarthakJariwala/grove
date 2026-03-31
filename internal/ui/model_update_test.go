@@ -158,6 +158,43 @@ func TestUpdatePreviewLeftRightCyclesWindows(t *testing.T) {
 	}
 }
 
+func TestUpdatePreviewQTreatsAsBack(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", &trackingSessionManager{})
+	m.detailMode = detailPreview
+	m.previewSession = "api/one"
+	m.previewWindow = 2
+	m.previewZoomed = true
+
+	model, cmd := m.updatePreview(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got := model.(Model)
+	if cmd != nil {
+		t.Fatal("expected no command when q exits zoomed preview")
+	}
+	if got.detailMode != detailPreview {
+		t.Fatalf("detailMode = %v, want detailPreview", got.detailMode)
+	}
+	if got.previewSession != "api/one" {
+		t.Fatalf("previewSession = %q, want api/one", got.previewSession)
+	}
+	if got.previewZoomed {
+		t.Fatal("expected q to unzoom preview before exiting it")
+	}
+
+	model, cmd = got.updatePreview(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got = model.(Model)
+	if cmd != nil {
+		t.Fatal("expected no command when q exits preview")
+	}
+	if got.detailMode != detailNormal {
+		t.Fatalf("detailMode = %v, want detailNormal", got.detailMode)
+	}
+	if got.previewSession != "" {
+		t.Fatalf("previewSession = %q, want empty", got.previewSession)
+	}
+}
+
 func TestPreviewEnterAttachesPreviewSession(t *testing.T) {
 	t.Parallel()
 

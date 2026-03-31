@@ -649,7 +649,7 @@ func (m Model) renderHelpBar() string {
 			{"z", zoomHint},
 			{"r", "refresh"},
 			{"esc", "back"},
-			{"q", "quit"},
+			{"q", "back"},
 		}
 	} else if _, ok := m.selectedSessionRow(); ok {
 		bindings = []binding{
@@ -1282,9 +1282,9 @@ func (m Model) updateKillConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
-	case "esc":
+	case "esc", "q":
 		if m.previewZoomed {
 			m.previewZoomed = false
 			return m, nil
