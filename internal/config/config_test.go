@@ -58,10 +58,9 @@ func TestConfigNormalize(t *testing.T) {
 		EditorCommand: "  code .  ",
 		Folders: []Folder{
 			{
-				Name:           " Main API ",
-				Path:           " ./api ",
-				DefaultCommand: "  make dev  ",
-				EditorCommand:  "  zed .  ",
+				Name:          " Main API ",
+				Path:          " ./api ",
+				EditorCommand: "  zed .  ",
 			},
 		},
 	}
@@ -77,9 +76,6 @@ func TestConfigNormalize(t *testing.T) {
 	f := cfg.Folders[0]
 	if f.Name != "Main API" {
 		t.Fatalf("folder.Name = %q, want %q", f.Name, "Main API")
-	}
-	if f.DefaultCommand != "make dev" {
-		t.Fatalf("folder.DefaultCommand = %q, want %q", f.DefaultCommand, "make dev")
 	}
 	if f.EditorCommand != "zed ." {
 		t.Fatalf("folder.EditorCommand = %q, want %q", f.EditorCommand, "zed .")
@@ -126,6 +122,114 @@ func TestConfigNormalizeErrors(t *testing.T) {
 			name:    "empty namespace",
 			cfg:     Config{Folders: []Folder{{Name: "---", Path: "./a"}}},
 			wantErr: "produced empty namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cfg.Normalize(base)
+			if err == nil {
+				t.Fatalf("Normalize() error = nil, want contains %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Normalize() error = %q, want contains %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfigNormalizeTrimsAgentsAndCommands(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	cfg := Config{
+		EditorCommand: " code . ",
+		Agents:        []Agent{{Name: " Codex ", Command: " codex "}},
+		Folders: []Folder{{
+			Name:          " API ",
+			Path:          " ./api ",
+			EditorCommand: " zed . ",
+			Agents:        []Agent{{Name: " Amp ", Command: " amp "}},
+			Commands:      []Command{{Name: " Start ", Command: " make start "}},
+		}},
+	}
+
+	if err := cfg.Normalize(base); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+
+	if got := cfg.Agents[0]; got.Name != "Codex" || got.Command != "codex" {
+		t.Fatalf("global agent = %#v, want trimmed fields", got)
+	}
+
+	folder := cfg.Folders[0]
+	if got := folder.Agents[0]; got.Name != "Amp" || got.Command != "amp" {
+		t.Fatalf("folder agent = %#v, want trimmed fields", got)
+	}
+	if got := folder.Commands[0]; got.Name != "Start" || got.Command != "make start" {
+		t.Fatalf("folder command = %#v, want trimmed fields", got)
+	}
+	if folder.Namespace != "api" {
+		t.Fatalf("folder.Namespace = %q, want %q", folder.Namespace, "api")
+	}
+}
+
+func TestConfigNormalizeRejectsEmptyNestedEntries(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr string
+	}{
+		{
+			name:    "global agent missing command",
+			cfg:     Config{Agents: []Agent{{Name: "Codex"}}},
+			wantErr: "agent[0] command is required",
+		},
+		{
+			name:    "global agent whitespace name",
+			cfg:     Config{Agents: []Agent{{Name: "   ", Command: "codex"}}},
+			wantErr: "agent[0] name is required",
+		},
+		{
+			name: "folder agent missing name",
+			cfg: Config{Folders: []Folder{{
+				Name:   "API",
+				Path:   "./api",
+				Agents: []Agent{{Command: "amp"}},
+			}}},
+			wantErr: "folder[0] agent[0] name is required",
+		},
+		{
+			name: "folder agent whitespace command",
+			cfg: Config{Folders: []Folder{{
+				Name:   "API",
+				Path:   "./api",
+				Agents: []Agent{{Name: "Amp", Command: "   "}},
+			}}},
+			wantErr: "folder[0] agent[0] command is required",
+		},
+		{
+			name: "folder command missing command",
+			cfg: Config{Folders: []Folder{{
+				Name:     "API",
+				Path:     "./api",
+				Commands: []Command{{Name: "start"}},
+			}}},
+			wantErr: "folder[0] command[0] command is required",
+		},
+		{
+			name: "folder command whitespace name",
+			cfg: Config{Folders: []Folder{{
+				Name:     "API",
+				Path:     "./api",
+				Commands: []Command{{Name: "   ", Command: "make start"}},
+			}}},
+			wantErr: "folder[0] command[0] name is required",
 		},
 	}
 

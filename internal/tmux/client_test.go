@@ -9,8 +9,6 @@ import (
 )
 
 func TestListSessionsParsesOutput(t *testing.T) {
-	t.Parallel()
-
 	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
 		_ = name
 		return helperCommand(t, "session_ok")
@@ -40,8 +38,6 @@ func TestListSessionsParsesOutput(t *testing.T) {
 }
 
 func TestListSessionsNoServerRunningReturnsEmpty(t *testing.T) {
-	t.Parallel()
-
 	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
 		_ = name
 		_ = args
@@ -60,8 +56,6 @@ func TestListSessionsNoServerRunningReturnsEmpty(t *testing.T) {
 }
 
 func TestListPanesParsesOutput(t *testing.T) {
-	t.Parallel()
-
 	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
 		_ = name
 		_ = args
@@ -88,8 +82,6 @@ func TestListPanesParsesOutput(t *testing.T) {
 }
 
 func TestListPanesNoServerRunningReturnsEmpty(t *testing.T) {
-	t.Parallel()
-
 	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
 		_ = name
 		_ = args
@@ -108,8 +100,6 @@ func TestListPanesNoServerRunningReturnsEmpty(t *testing.T) {
 }
 
 func TestMutatingCommandsIncludeTmuxOutputOnError(t *testing.T) {
-	t.Parallel()
-
 	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
 		_ = name
 		_ = args
@@ -127,12 +117,32 @@ func TestMutatingCommandsIncludeTmuxOutputOnError(t *testing.T) {
 	}
 }
 
+func TestNewSessionWithCommandIncludesStartupCommand(t *testing.T) {
+	var gotArgs []string
+	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
+		_ = name
+		gotArgs = append([]string(nil), args...)
+		return helperCommand(t, "mutate_ok")
+	})
+	defer restore()
+
+	client := &Client{}
+	if err := client.NewSessionWithCommand("api/cmd-start", "/tmp/api", "make start"); err != nil {
+		t.Fatalf("NewSessionWithCommand() error = %v", err)
+	}
+
+	want := []string{"new-session", "-d", "-s", "api/cmd-start", "-c", "/tmp/api", "make start"}
+	if got := fmt.Sprint(gotArgs); got != fmt.Sprint(want) {
+		t.Fatalf("tmux args = %v, want %v", gotArgs, want)
+	}
+}
+
 func TestActivePaneStates(t *testing.T) {
 	t.Parallel()
 
 	panes := []PaneInfo{
-		{SessionName: "api/one", WindowActive: true, PaneActive: true, Command: "go", PaneTitle: "* Claude", CurrentPath: "/tmp/api", BellFlag: true},
 		{SessionName: "api/one", ActivityFlag: true},
+		{SessionName: "api/one", WindowActive: true, PaneActive: true, Command: "go", PaneTitle: "* Claude", CurrentPath: "/tmp/api", BellFlag: true},
 		{SessionName: "web/two", WindowActive: false, PaneActive: false, SilenceFlag: true},
 	}
 
@@ -233,6 +243,8 @@ func TestHelperProcess(t *testing.T) {
 	case "mutate_error":
 		fmt.Fprint(os.Stderr, "permission denied\n")
 		os.Exit(1)
+	case "mutate_ok":
+		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown helper scenario: %s\n", args[i+1])
 		os.Exit(2)
