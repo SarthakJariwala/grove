@@ -41,6 +41,7 @@ type SessionManager interface {
 	ListSessions() ([]Session, error)
 	ListPanes() ([]PaneInfo, error)
 	NewSession(name, cwd string) error
+	NewSessionWithCommand(name, cwd, command string) error
 	SendKeys(target, command string) error
 	RenameSession(oldName, newName string) error
 	KillSession(name string) error
@@ -185,7 +186,7 @@ type ActivePaneState struct {
 func ActivePaneStates(panes []PaneInfo) map[string]ActivePaneState {
 	result := make(map[string]ActivePaneState)
 	for _, p := range panes {
-		state, exists := result[p.SessionName]
+		state := result[p.SessionName]
 
 		// Active window+pane provides command, title, and path
 		if p.WindowActive && p.PaneActive {
@@ -205,9 +206,15 @@ func ActivePaneStates(panes []PaneInfo) map[string]ActivePaneState {
 			state.SilenceFlag = true
 		}
 
-		if p.WindowActive && p.PaneActive || exists {
-			result[p.SessionName] = state
+		result[p.SessionName] = state
+	}
+
+	for sessionName, state := range result {
+		if state.Command == "" && state.PaneTitle == "" && state.CurrentPath == "" {
+			delete(result, sessionName)
+			continue
 		}
+		result[sessionName] = state
 	}
 	return result
 }
@@ -257,6 +264,20 @@ func stripTitleBranding(title string) string {
 
 func (c *Client) NewSession(name, cwd string) error {
 	cmd := execCommand("tmux", "new-session", "-d", "-s", name, "-c", cwd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux new-session: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *Client) NewSessionWithCommand(name, cwd, command string) error {
+	args := []string{"new-session", "-d", "-s", name, "-c", cwd}
+	if strings.TrimSpace(command) != "" {
+		args = append(args, command)
+	}
+
+	cmd := execCommand("tmux", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux new-session: %w (%s)", err, strings.TrimSpace(string(out)))

@@ -600,7 +600,7 @@ func (m Model) renderFooter() string {
 	if m.promptMode != promptNone {
 		label := m.styles.promptLabel.Render(m.promptTitle() + " ")
 		enterHint := "enter confirm"
-		if m.promptMode == promptAddFolder && m.promptStep < 3 {
+		if m.promptMode == promptAddFolder && m.promptStep < 2 {
 			enterHint = "enter next"
 		}
 		extra := ""
@@ -934,9 +934,6 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 			m.styles.detailName.Render(folder.Name) + "  " + m.styles.detailMeta.Render(fmt.Sprintf("%d sessions", len(sessions))),
 			"",
 			m.kvPad("Path", lw, m.styles.infoValue.Render(truncateMiddle(folder.Path, maxWidth-lw))),
-		}
-		if folder.DefaultCommand != "" {
-			lines = append(lines, m.kvPad("Command", lw, m.styles.infoValue.Render(truncateRight(folder.DefaultCommand, maxWidth-lw))))
 		}
 
 		if len(sessions) > 0 {
@@ -1434,15 +1431,9 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingFolder.Path = absPath
 					m.promptStep = 2
 					m.promptMode = promptAddFolder
-					m.openPrompt(promptAddFolder, "", "default command (optional)")
-					return m, textinput.Blink
-				case 2:
-					m.pendingFolder.DefaultCommand = value
-					m.promptStep = 3
-					m.promptMode = promptAddFolder
 					m.openPrompt(promptAddFolder, "", "editor command (optional, e.g. code .)")
 					return m, textinput.Blink
-				case 3:
+				case 2:
 					m.pendingFolder.EditorCommand = value
 					return m, m.addFolderCmd(m.pendingFolder)
 				}
@@ -1532,7 +1523,7 @@ func (m Model) promptTitle() string {
 	case promptFilter:
 		return "filter:"
 	case promptAddFolder:
-		return fmt.Sprintf("add folder (%d/4):", m.promptStep+1)
+		return fmt.Sprintf("add folder (%d/3):", m.promptStep+1)
 	default:
 		return ""
 	}
@@ -1838,11 +1829,6 @@ func (m Model) newSessionCmd(folder config.Folder, leaf string) tea.Cmd {
 	return func() tea.Msg {
 		if err := m.client.NewSession(fullName, folder.Path); err != nil {
 			return actionResultMsg{err: err}
-		}
-		if folder.DefaultCommand != "" {
-			if err := m.client.SendKeys(fullName, folder.DefaultCommand); err != nil {
-				return actionResultMsg{err: err}
-			}
 		}
 		return actionResultMsg{status: "created " + fullName, attachTarget: fullName}
 	}

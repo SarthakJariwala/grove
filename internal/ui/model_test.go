@@ -44,6 +44,8 @@ func (f fakeSessionManager) ListPanes() ([]tmux.PaneInfo, error) {
 
 func (f fakeSessionManager) NewSession(name, cwd string) error { return nil }
 
+func (f fakeSessionManager) NewSessionWithCommand(name, cwd, command string) error { return nil }
+
 func (f fakeSessionManager) SendKeys(target, command string) error { return nil }
 
 func (f fakeSessionManager) RenameSession(oldName, newName string) error { return nil }

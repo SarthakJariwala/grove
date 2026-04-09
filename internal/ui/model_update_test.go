@@ -22,6 +22,10 @@ func (f *trackingSessionManager) ListPanes() ([]tmux.PaneInfo, error) { return n
 
 func (f *trackingSessionManager) NewSession(name, cwd string) error { return nil }
 
+func (f *trackingSessionManager) NewSessionWithCommand(name, cwd, command string) error {
+	return nil
+}
+
 func (f *trackingSessionManager) SendKeys(target, command string) error { return nil }
 
 func (f *trackingSessionManager) RenameSession(oldName, newName string) error { return nil }
