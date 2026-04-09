@@ -227,7 +227,7 @@ func TestRenderDetailPaneSessionKeepsOnlyOperationalFields(t *testing.T) {
 		}},
 	}
 	m.rebuildRows()
-	m.setSelected(1)
+	m.setSelected(3)
 
 	got := m.renderDetailPane(20, 80, 84, false)
 
@@ -241,6 +241,206 @@ func TestRenderDetailPaneSessionKeepsOnlyOperationalFields(t *testing.T) {
 		if !strings.Contains(got, keep) {
 			t.Fatalf("detail pane = %q, want %q", got, keep)
 		}
+	}
+}
+
+func TestRenderDetailPaneFolderSummarizesSections(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands: []config.Command{
+			{Name: "start", Command: "make start"},
+			{Name: "worker", Command: "make worker"},
+		},
+	}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/agent-codex-1", Windows: 1, CurrentCommand: "codex"},
+			{Name: "api/term-1", Windows: 1},
+			{Name: "api/cmd-start", Windows: 1, CurrentCommand: "make"},
+		},
+	}
+	m.rebuildRows()
+	m.setSelected(0)
+
+	got := m.renderDetailPane(20, 80, 84, false)
+
+	for _, want := range []string{"API", "1 running agent", "1 running terminal", "2 commands"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("detail pane = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestRenderDetailPaneSectionAndCommandRowsAreTypeAware(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "start", Command: "make start"}},
+	}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.rebuildRows()
+
+	m.setSelected(1)
+	sectionDetail := m.renderDetailPane(20, 80, 84, false)
+	for _, want := range []string{"Agents", "running agent instances", "Press a to add and launch an agent"} {
+		if !strings.Contains(sectionDetail, want) {
+			t.Fatalf("section detail = %q, want %q", sectionDetail, want)
+		}
+	}
+
+	m.setSelected(4)
+	commandDetail := m.renderDetailPane(20, 80, 84, false)
+	for _, want := range []string{"start", "stopped", "make start"} {
+		if !strings.Contains(commandDetail, want) {
+			t.Fatalf("command detail = %q, want %q", commandDetail, want)
+		}
+	}
+	if strings.Contains(commandDetail, "shell idle") {
+		t.Fatalf("command detail = %q, should not render session runtime fields for stopped commands", commandDetail)
+	}
+}
+
+func TestRenderTreePaneShowsSectionHeadings(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "start", Command: "make start"}},
+	}}}
+
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.rebuildRows()
+	got := m.renderTreePane(12, 60, 64, false)
+
+	for _, heading := range []string{"Agents", "Terminals", "Commands", "start", "stopped"} {
+		if !strings.Contains(got, heading) {
+			t.Fatalf("tree view = %q, want %q", got, heading)
+		}
+	}
+}
+
+func TestRenderHelpBarCommandRowsShowLifecycleBindings(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.rows = []treeRow{{typeOf: rowCommand, folderIndex: 0, sessionName: "api/cmd-start", displayName: "start", commandText: "make start", status: "running"}}
+
+	running := m.renderHelpBar()
+	for _, want := range []string{"attach", "preview", "cmd", "stop", "restart"} {
+		if !strings.Contains(running, want) {
+			t.Fatalf("running help bar = %q, want %q", running, want)
+		}
+	}
+	if strings.Contains(running, "kill") {
+		t.Fatalf("running help bar = %q, should not advertise kill for command rows", running)
+	}
+
+	m.rows[0].status = "stopped"
+	stopped := m.renderHelpBar()
+	for _, want := range []string{"start", "restart"} {
+		if !strings.Contains(stopped, want) {
+			t.Fatalf("stopped help bar = %q, want %q", stopped, want)
+		}
+	}
+	for _, unwanted := range []string{"attach", "preview", "cmd", "kill"} {
+		if strings.Contains(stopped, unwanted) {
+			t.Fatalf("stopped help bar = %q, should not include %q", stopped, unwanted)
+		}
+	}
+}
+
+func TestSelectedHelpersAreRowTypeAware(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands: []config.Command{
+			{Name: "start", Command: "make start"},
+			{Name: "worker", Command: "make worker"},
+		},
+	}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/term-1", Windows: 1},
+			{Name: "api/cmd-start", Windows: 1, CurrentCommand: "make"},
+			{Name: "api/cmd-worker", Windows: 1, CurrentCommand: "zsh"},
+		},
+	}
+	m.rebuildRows()
+
+	for _, selected := range []int{1, 2, 3, 4, 5, 6} {
+		m.setSelected(selected)
+		folder, ok := m.selectedFolder()
+		if !ok || folder.Namespace != "api" {
+			t.Fatalf("selectedFolder() at row %d = (%#v, %v), want api folder", selected, folder, ok)
+		}
+	}
+
+	m.setSelected(5)
+	runningCommand, ok := m.selectedSessionRow()
+	if !ok || runningCommand.typeOf != rowCommand || runningCommand.sessionName != "api/cmd-start" {
+		t.Fatalf("selectedSessionRow() running command = (%#v, %v), want running command row", runningCommand, ok)
+	}
+
+	m.setSelected(6)
+	if row, ok := m.selectedSessionRow(); ok {
+		t.Fatalf("selectedSessionRow() on stopped command = (%#v, %v), want false", row, ok)
+	}
+}
+
+func TestRenderDetailPaneDerivesAlertsFromFlags(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:           "api/term-1",
+			Windows:        1,
+			CurrentCommand: "go",
+			AlertsActivity: true,
+		}},
+	}
+	m.rebuildRows()
+	m.setSelected(3)
+
+	got := m.renderDetailPane(20, 80, 84, false)
+	if !strings.Contains(got, "activity") {
+		t.Fatalf("detail pane = %q, want derived alert chip", got)
+	}
+}
+
+func TestRebuildRowsPreservesSelectedSessionByIdentity(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/term-1", Windows: 1}}}
+	m.rebuildRows()
+	m.setSelected(3)
+
+	m.sessions = map[int][]tmux.Session{0: {
+		{Name: "api/agent-codex-1", Windows: 1},
+		{Name: "api/term-1", Windows: 1},
+	}}
+	m.rebuildRows()
+
+	row, ok := m.selectedSessionRow()
+	if !ok || row.sessionName != "api/term-1" {
+		t.Fatalf("selectedSessionRow() after rebuild = (%#v, %v), want api/term-1", row, ok)
 	}
 }
 
@@ -331,7 +531,7 @@ func TestStartPreviewUsesActiveWindowTarget(t *testing.T) {
 	m.sessionWindows = map[string][]int{"api/one": {0, 2, 5}}
 	m.activeWindows = map[string]int{"api/one": 2}
 	m.rebuildRows()
-	m.setSelected(1)
+	m.setSelected(3)
 
 	cmd := m.startPreview()
 	if m.previewSession != "api/one" {

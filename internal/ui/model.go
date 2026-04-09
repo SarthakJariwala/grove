@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,15 +26,21 @@ type rowType int
 
 const (
 	rowFolder rowType = iota
-	rowSession
+	rowSection
+	rowAgentInstance
+	rowTerminalInstance
+	rowCommand
 )
 
 type treeRow struct {
 	typeOf         rowType
+	section        sectionKind
 	folderIndex    int
 	sessionName    string
-	leafName       string
+	displayName    string
+	commandText    string
 	status         string
+	attached       bool
 	windows        int
 	hasAlerts      bool
 	alertsBell     bool
@@ -47,6 +52,20 @@ type treeRow struct {
 	lastActivity   int64
 }
 
+type overlayMode int
+
+const (
+	overlayNone overlayMode = iota
+	overlayAgentPicker
+)
+
+type agentChoice struct {
+	Label   string
+	Agent   config.Agent
+	Persist bool
+	IsNew   bool
+}
+
 type promptMode int
 
 const (
@@ -56,6 +75,8 @@ const (
 	promptRunCommand
 	promptFilter
 	promptAddFolder
+	promptAddAgentName
+	promptAddAgentCommand
 )
 
 type detailMode int
@@ -101,9 +122,13 @@ type Model struct {
 	statusSeq      int
 	errMsg         string
 
-	filterQuery       string
-	confirmKillTarget string
-	detailScroll      int
+	filterQuery        string
+	confirmKillTarget  string
+	detailScroll       int
+	overlayMode        overlayMode
+	overlayIndex       int
+	overlayFolderIndex int
+	agentChoices       []agentChoice
 
 	detailMode      detailMode
 	previewSession  string
@@ -119,6 +144,7 @@ type Model struct {
 	promptMode    promptMode
 	promptStep    int
 	pendingFolder config.Folder
+	pendingAgent  config.Agent
 }
 
 type styleSet struct {
@@ -298,6 +324,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.promptMode != promptNone {
 		return m.updatePrompt(msg)
 	}
+	if m.overlayMode != overlayNone {
+		return m.updateOverlay(msg)
+	}
 	if m.confirmKillTarget != "" {
 		return m.updateKillConfirm(msg)
 	}
@@ -346,19 +375,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			folder, ok := m.selectedFolder()
 			if !ok {
-				m.errMsg = "select a folder or one of its sessions"
+				m.errMsg = "select a folder or one of its sections"
 				return m, nil
 			}
-			m.openPrompt(promptNewSession, m.defaultSessionLeaf(folder), "new session name")
-			return m, textinput.Blink
-		case "R":
-			row, ok := m.selectedSessionRow()
+			return m, m.newTerminalCmd(m.rows[m.selected].folderIndex, folder)
+		case "a":
+			if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
+				m.errMsg = "select a folder or the Agents section"
+				return m, nil
+			}
+			row := m.rows[m.selected]
+			if row.typeOf != rowFolder && !(row.typeOf == rowSection && row.section == sectionAgents) {
+				m.errMsg = "select a folder or the Agents section"
+				return m, nil
+			}
+			folder, ok := m.selectedFolder()
 			if !ok {
-				m.errMsg = "select a session to rename"
+				m.errMsg = "select a folder or the Agents section"
 				return m, nil
 			}
-			m.openPrompt(promptRenameSession, row.leafName, "rename session")
-			return m, textinput.Blink
+			m.openAgentPicker(folder)
+			return m, nil
+		case "s":
+			row, ok := m.selectedCommandRow()
+			if !ok || row.status == "running" {
+				return m, nil
+			}
+			folder := m.cfg.Folders[row.folderIndex]
+			return m, m.startCommandCmd(folder, row)
+		case "x":
+			row, ok := m.selectedCommandRow()
+			if !ok || row.status != "running" {
+				return m, nil
+			}
+			return m, m.killSessionCmd(row.sessionName)
+		case "R":
+			row, ok := m.selectedCommandRow()
+			if !ok {
+				return m, nil
+			}
+			folder := m.cfg.Folders[row.folderIndex]
+			if row.status == "running" {
+				return m, m.restartCommandCmd(folder, row)
+			}
+			return m, m.startCommandCmd(folder, row)
 		case "c":
 			_, ok := m.selectedSessionRow()
 			if !ok {
@@ -368,9 +428,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openPrompt(promptRunCommand, "", "command to run")
 			return m, textinput.Blink
 		case "K":
-			row, ok := m.selectedSessionRow()
+			row, ok := m.selectedKillableSessionRow()
 			if !ok {
-				m.errMsg = "select a session to kill"
+				m.errMsg = "select an agent or terminal to kill"
 				return m, nil
 			}
 			m.confirmKillTarget = row.sessionName
@@ -409,6 +469,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			row, ok := m.selectedSessionRow()
 			if !ok {
+				m.errMsg = "select a running session"
 				return m, nil
 			}
 			m.statusMsg = "attached to " + row.sessionName + " (detach with Ctrl-b d)"
@@ -574,6 +635,10 @@ func (m Model) View() string {
 		content = lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 
+	if m.overlayMode == overlayAgentPicker {
+		content = lipgloss.Place(m.width, contentH, lipgloss.Center, lipgloss.Center, m.renderAgentPickerOverlay())
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, header, "", content, footer)
 }
 
@@ -596,6 +661,10 @@ func (m Model) renderHeader() string {
 // ── Footer (merged help bar + status) ───────────────────────────────
 
 func (m Model) renderFooter() string {
+	if m.overlayMode == overlayAgentPicker {
+		return m.styles.promptLabel.Render("agent picker") + m.styles.promptHint.Render("  ↑/↓ select · enter confirm · esc cancel")
+	}
+
 	// Prompt mode: show prompt input
 	if m.promptMode != promptNone {
 		label := m.styles.promptLabel.Render(m.promptTitle() + " ")
@@ -638,6 +707,7 @@ func (m Model) renderHelpBar() string {
 
 	// Context-sensitive hint at the start
 	var bindings []binding
+	selectedRow, hasSelectedRow := m.selectedRow()
 	if m.detailMode == detailPreview {
 		zoomHint := "zoom in"
 		if m.previewZoomed {
@@ -651,13 +721,37 @@ func (m Model) renderHelpBar() string {
 			{"esc", "back"},
 			{"q", "back"},
 		}
+	} else if hasSelectedRow && selectedRow.typeOf == rowCommand {
+		bindings = []binding{{"e", "editor"}}
+		if selectedRow.status == "running" {
+			bindings = append(bindings,
+				binding{"⏎", "attach"},
+				binding{"v", "preview"},
+				binding{"c", "cmd"},
+				binding{"x", "stop"},
+				binding{"R", "restart"},
+			)
+		} else {
+			bindings = append(bindings,
+				binding{"s", "start"},
+				binding{"R", "restart"},
+			)
+		}
+		if m.filterQuery != "" {
+			bindings = append(bindings, binding{"esc", "clear filter"})
+		}
+		bindings = append(bindings,
+			binding{"/", "filter"},
+			binding{"r", "refresh"},
+			binding{"q", "quit"},
+		)
 	} else if _, ok := m.selectedSessionRow(); ok {
 		bindings = []binding{
 			{"⏎", "attach"},
 			{"v", "preview"},
 			{"e", "editor"},
-			{"n", "new"},
-			{"R", "rename"},
+			{"n", "terminal"},
+			{"a", "agent"},
 			{"K", "kill"},
 			{"c", "cmd"},
 			{"A", "add folder"},
@@ -672,7 +766,8 @@ func (m Model) renderHelpBar() string {
 		}...)
 	} else {
 		bindings = []binding{
-			{"n", "new session"},
+			{"n", "new terminal"},
+			{"a", "agent"},
 			{"e", "editor"},
 			{"A", "add folder"},
 			{"j/k", "navigate"},
@@ -699,56 +794,35 @@ func (m Model) renderHelpBar() string {
 	return strings.Join(parts, "")
 }
 
+func (m Model) selectedRow() (treeRow, bool) {
+	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
+		return treeRow{}, false
+	}
+	return m.rows[m.selected], true
+}
+
 // ── Tree Pane ───────────────────────────────────────────────────────
 
 func (m *Model) rebuildRows() {
-	rows := make([]treeRow, 0)
-	query := strings.ToLower(strings.TrimSpace(m.filterQuery))
-	for folderIndex, folder := range m.cfg.Folders {
-		sessions := append([]tmux.Session(nil), m.sessions[folderIndex]...)
-		sort.Slice(sessions, func(i, j int) bool {
-			return sessions[i].Name < sessions[j].Name
-		})
-
-		folderMatches := query == "" || containsAny(strings.ToLower(folder.Name), strings.ToLower(folder.Path), strings.ToLower(folder.Namespace), query)
-		matchedSessions := make([]treeRow, 0, len(sessions))
-		for _, s := range sessions {
-			leaf := strings.TrimPrefix(s.Name, folder.Namespace+"/")
-			status := "detached"
-			if s.Attached {
-				status = "attached"
-			}
-			row := treeRow{
-				typeOf:         rowSession,
-				folderIndex:    folderIndex,
-				sessionName:    s.Name,
-				leafName:       leaf,
-				status:         status,
-				windows:        s.Windows,
-				hasAlerts:      s.HasAlerts,
-				alertsBell:     s.AlertsBell,
-				alertsActivity: s.AlertsActivity,
-				alertsSilence:  s.AlertsSilence,
-				currentCommand: s.CurrentCommand,
-				paneTitle:      s.PaneTitle,
-				currentPath:    s.CurrentPath,
-				lastActivity:   s.LastActivity,
-			}
-
-			if folderMatches || query == "" || containsAny(strings.ToLower(leaf), strings.ToLower(s.Name), strings.ToLower(status), query) {
-				matchedSessions = append(matchedSessions, row)
-			}
-		}
-
-		if !folderMatches && len(matchedSessions) == 0 {
-			continue
-		}
-
-		rows = append(rows, treeRow{typeOf: rowFolder, folderIndex: folderIndex})
-		rows = append(rows, matchedSessions...)
+	selectedRow, hadSelection := treeRow{}, false
+	if m.selected >= 0 && m.selected < len(m.rows) {
+		selectedRow = m.rows[m.selected]
+		hadSelection = true
 	}
 
-	m.rows = rows
+	sessionByName := make(map[string]tmux.Session)
+	for _, folderSessions := range m.sessions {
+		for _, session := range folderSessions {
+			sessionByName[session.Name] = session
+		}
+	}
+
+	m.rows = buildTreeRows(m.cfg, m.sessions, sessionByName)
+	if hadSelection {
+		if nextSelected, ok := findMatchingRowIndex(m.rows, selectedRow); ok {
+			m.selected = nextSelected
+		}
+	}
 	if m.selected >= len(m.rows) && len(m.rows) > 0 {
 		m.selected = len(m.rows) - 1
 	}
@@ -758,14 +832,55 @@ func (m *Model) rebuildRows() {
 	m.detailScroll = 0
 }
 
-func (m Model) isLastSessionInFolder(idx int) bool {
-	if idx < 0 || idx >= len(m.rows) || m.rows[idx].typeOf != rowSession {
-		return false
+func isInstanceRowType(typeOf rowType) bool {
+	return typeOf == rowAgentInstance || typeOf == rowTerminalInstance
+}
+
+func (m Model) renderAgentPickerOverlay() string {
+	width := 48
+	if m.width > 0 && m.width-6 < width {
+		width = m.width - 6
 	}
-	if idx+1 >= len(m.rows) {
-		return true
+	if width < 24 {
+		width = 24
 	}
-	return m.rows[idx+1].typeOf != rowSession
+
+	lines := []string{m.styles.paneTitle.Render("Add Agent"), ""}
+	for i, choice := range m.agentChoices {
+		prefix := "  "
+		if i == m.overlayIndex {
+			prefix = m.styles.selAccent.Render("▎") + " "
+		}
+		label := choice.Label
+		if choice.Persist {
+			label += "  " + m.styles.detailMeta.Render("save to folder")
+		}
+		if choice.IsNew {
+			label = m.styles.infoValue.Render(choice.Label)
+		}
+		lines = append(lines, prefix+label)
+	}
+	return m.styledPane(strings.Join(lines, "\n"), width, false)
+}
+
+func findMatchingRowIndex(rows []treeRow, selected treeRow) (int, bool) {
+	for i, row := range rows {
+		switch selected.typeOf {
+		case rowFolder:
+			if row.typeOf == rowFolder && row.folderIndex == selected.folderIndex {
+				return i, true
+			}
+		case rowSection:
+			if row.typeOf == rowSection && row.folderIndex == selected.folderIndex && row.section == selected.section {
+				return i, true
+			}
+		default:
+			if row.sessionName != "" && row.sessionName == selected.sessionName {
+				return i, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string {
@@ -796,7 +911,6 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		isSelected := i == m.selected
 		isKillTarget := m.confirmKillTarget != "" && row.sessionName == m.confirmKillTarget
 
-		// Add blank line before each folder group (including the first for spacing after title)
 		if row.typeOf == rowFolder {
 			visualLines++
 			if visualLines > bodyHeight {
@@ -812,66 +926,15 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 			break
 		}
 
-		if row.typeOf == rowFolder {
-			folder := m.cfg.Folders[row.folderIndex]
-			count := len(m.sessions[row.folderIndex])
-			text := fmt.Sprintf("▸ %s (%d)", folder.Name, count)
-			text = truncateRight(text, maxWidth-2)
-
-			if dim {
-				rows = append(rows, " "+m.styles.rowDim.Render(text))
-			} else if isSelected {
-				rows = append(rows, m.selectedLine("▎"+text, maxWidth))
-			} else {
-				rows = append(rows, " "+m.styles.rowFolder.Render(text))
-			}
+		plain := m.treeLineText(row, maxWidth)
+		if dim {
+			rows = append(rows, m.styles.rowDim.Render(plain))
+		} else if isSelected {
+			rows = append(rows, m.selectedLine("▎"+plain, maxWidth))
+		} else if isKillTarget {
+			rows = append(rows, m.styles.rowKillTarget.Render(padRight(plain, maxWidth)))
 		} else {
-			isLast := m.isLastSessionInFolder(i)
-			connector := "├"
-			if isLast {
-				connector = "└"
-			}
-
-			dotChar := "○"
-			if row.status == "attached" {
-				dotChar = "●"
-			}
-
-			winStr := fmt.Sprintf("(%dw)", row.windows)
-
-			// Build suffix: alert indicators only.
-			suffix := ""
-			plainSuffix := ""
-			if alertStr := alertIndicatorStr(row); alertStr != "" {
-				suffix = " " + m.styles.alertIndicator.Render(alertStr)
-				plainSuffix = " " + alertStr
-			}
-
-			// Layout: [indent 2][connector 1][ 1][dot 1][ 1][name][ 1][winStr][suffix]
-			nameMax := maxWidth - 2 - 1 - 1 - 1 - 1 - 1 - len(winStr) - len(plainSuffix)
-			if nameMax < 6 {
-				nameMax = 6
-			}
-			name := truncateRight(row.leafName, nameMax)
-
-			if dim {
-				plain := "  " + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
-				rows = append(rows, m.styles.rowDim.Render(plain))
-			} else if isSelected {
-				plain := "▎" + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
-				rows = append(rows, m.selectedLine(plain, maxWidth))
-			} else if isKillTarget {
-				plain := "  " + connector + " " + dotChar + " " + name + " " + winStr + plainSuffix
-				rows = append(rows, m.styles.rowKillTarget.Render(padRight(plain, maxWidth)))
-			} else {
-				dot := m.styles.statusDotDetached.Render(dotChar)
-				if row.status == "attached" {
-					dot = m.styles.statusDotAttached.Render(dotChar)
-				}
-				winCount := m.styles.windowCount.Render(winStr)
-				line := "  " + m.styles.helpSep.Render(connector) + " " + dot + " " + m.styles.rowSession.Render(name) + " " + winCount + suffix
-				rows = append(rows, line)
-			}
+			rows = append(rows, m.treeLineStyled(row, plain, maxWidth))
 		}
 	}
 
@@ -886,6 +949,64 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 	title := m.styles.paneTitle.Render("Sessions")
 	padded := padToHeight(title+"\n"+body, innerH)
 	return m.styledPane(padded, paneWidth, dim)
+}
+
+func (m Model) treeLineText(row treeRow, maxWidth int) string {
+	switch row.typeOf {
+	case rowFolder:
+		count := len(m.sessions[row.folderIndex])
+		return truncateRight(fmt.Sprintf("▸ %s (%d)", row.displayName, count), maxWidth)
+	case rowSection:
+		return truncateRight("  "+row.displayName, maxWidth)
+	case rowCommand:
+		text := fmt.Sprintf("    %s · %s", row.displayName, row.status)
+		if row.status == "running" && row.windows > 0 {
+			text += fmt.Sprintf(" (%dw)", row.windows)
+		}
+		return truncateRight(text, maxWidth)
+	default:
+		dot := "○"
+		if row.attached {
+			dot = "●"
+		}
+		text := fmt.Sprintf("    %s %s", dot, row.displayName)
+		if row.windows > 0 {
+			text += fmt.Sprintf(" (%dw)", row.windows)
+		}
+		if alertStr := alertIndicatorStr(row); alertStr != "" {
+			text += " " + alertStr
+		}
+		return truncateRight(text, maxWidth)
+	}
+}
+
+func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
+	switch row.typeOf {
+	case rowFolder:
+		return " " + m.styles.rowFolder.Render(plain)
+	case rowSection:
+		return " " + m.styles.detailSection.Render(plain)
+	case rowCommand:
+		status := m.styles.windowCount.Render(row.status)
+		base := "    " + m.styles.rowSession.Render(truncateRight(row.displayName, maxWidth-12)) + " · " + status
+		if row.status == "running" && row.windows > 0 {
+			base += " " + m.styles.windowCount.Render(fmt.Sprintf("(%dw)", row.windows))
+		}
+		return base
+	default:
+		dot := m.styles.statusDotDetached.Render("○")
+		if row.attached {
+			dot = m.styles.statusDotAttached.Render("●")
+		}
+		line := "    " + dot + " " + m.styles.rowSession.Render(row.displayName)
+		if row.windows > 0 {
+			line += " " + m.styles.windowCount.Render(fmt.Sprintf("(%dw)", row.windows))
+		}
+		if alertStr := alertIndicatorStr(row); alertStr != "" {
+			line += " " + m.styles.alertIndicator.Render(alertStr)
+		}
+		return line
+	}
 }
 
 func (m Model) renderEmptyTree() string {
@@ -921,136 +1042,187 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 		return m.renderPreviewPane(innerH, maxWidth, paneWidth, dim)
 	}
 
-	var lines []string
+	return m.renderDetailLines(m.detailLinesForRow(row, maxWidth), innerH, paneWidth, dim)
+}
 
-	if row.typeOf == rowFolder {
-		folder := m.cfg.Folders[row.folderIndex]
-		sessions := append([]tmux.Session(nil), m.sessions[row.folderIndex]...)
-		sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
+func (m Model) detailLinesForRow(row treeRow, maxWidth int) []string {
+	switch row.typeOf {
+	case rowFolder:
+		return m.folderDetailLines(row, maxWidth)
+	case rowSection:
+		return m.sectionDetailLines(row, maxWidth)
+	case rowCommand:
+		return m.commandDetailLines(row, maxWidth)
+	case rowAgentInstance, rowTerminalInstance:
+		return m.instanceDetailLines(row, maxWidth)
+	default:
+		return []string{m.styles.emptyHint.Render("select a folder or session")}
+	}
+}
 
-		// Folder card — header
-		const lw = 13
-		lines = []string{
-			m.styles.detailName.Render(folder.Name) + "  " + m.styles.detailMeta.Render(fmt.Sprintf("%d sessions", len(sessions))),
-			"",
-			m.kvPad("Path", lw, m.styles.infoValue.Render(truncateMiddle(folder.Path, maxWidth-lw))),
-		}
-
-		if len(sessions) > 0 {
-			// Activity summary
-			running := 0
-			bellCount := 0
-			activityCount := 0
-			silenceCount := 0
-			for _, s := range sessions {
-				if s.CurrentCommand != "" && !isShellCommand(s.CurrentCommand) {
-					running++
-				}
-				if s.AlertsBell {
-					bellCount++
-				}
-				if s.AlertsActivity {
-					activityCount++
-				}
-				if s.AlertsSilence {
-					silenceCount++
-				}
-			}
-			if running > 0 || bellCount > 0 || activityCount > 0 || silenceCount > 0 {
-				var parts []string
-				if running > 0 {
-					parts = append(parts, fmt.Sprintf("%d running", running))
-				}
-				if bellCount > 0 {
-					parts = append(parts, fmt.Sprintf("%d bell", bellCount))
-				}
-				if activityCount > 0 {
-					parts = append(parts, fmt.Sprintf("%d activity", activityCount))
-				}
-				if silenceCount > 0 {
-					parts = append(parts, fmt.Sprintf("%d silence", silenceCount))
-				}
-				lines = append(lines, m.styles.detailMeta.Render(strings.Join(parts, ", ")))
-			}
-
-			lines = append(lines, "")
-			lines = append(lines, m.styles.infoLabel.Render("Sessions"))
-			for _, s := range sessions {
-				dot := m.styles.statusDotDetached.Render("○")
-				if s.Attached {
-					dot = m.styles.statusDotAttached.Render("●")
-				}
-				leaf := strings.TrimPrefix(s.Name, folder.Namespace+"/")
-				entry := dot + " " + m.styles.infoValue.Render(truncateRight(leaf, maxWidth-4))
-				if s.CurrentCommand != "" && !isShellCommand(s.CurrentCommand) {
-					entry += " " + m.styles.commandDim.Render(truncateRight(s.CurrentCommand, 12))
-				}
-				lines = append(lines, entry)
-			}
-		} else {
-			lines = append(lines, "", m.styles.emptyHint.Render("press n to create a session"))
-		}
-	} else {
-		// Session card — header
-		statusText := m.styles.detailMeta.Render("○ detached")
-		if row.status == "attached" {
-			statusText = m.styles.chipPrimary.Render("● attached")
-		}
-		windowLabel := "windows"
-		if row.windows == 1 {
-			windowLabel = "window"
-		}
-		winInfo := fmt.Sprintf("%d %s", row.windows, windowLabel)
-
-		lines = []string{
-			m.styles.detailName.Render(truncateRight(row.leafName, maxWidth)),
-			statusText + m.styles.detailMeta.Render("  ·  "+winInfo),
-			m.dividerLine(maxWidth),
-		}
-
-		// Key-value info section
-		const lw = 13
-
-		running := strings.TrimSpace(row.currentCommand)
-		if running == "" || isShellCommand(running) {
-			lines = append(lines, m.kvPad("Running", lw, m.styles.detailMeta.Render("shell idle")))
-		} else {
-			lines = append(lines, m.kvPad("Running", lw, m.styles.infoValue.Render(truncateRight(running, maxWidth-lw))))
-		}
-
-		if title := paneDisplayTitle(row); title != "" {
-			lines = append(lines, m.kvPad("Title", lw, m.styles.infoValue.Render(truncateRight(title, maxWidth-lw))))
-		}
-
-		lines = append(lines, "")
-		if row.lastActivity > 0 {
-			d := time.Since(time.Unix(row.lastActivity, 0))
-			lines = append(lines, m.kvPad("Active", lw, m.styles.infoValue.Render(formatDuration(d))))
-		} else {
-			lines = append(lines, m.kvPad("Active", lw, m.styles.detailMeta.Render("unknown")))
-		}
-
-		// Alerts — only shown when present
-		if row.hasAlerts {
-			lines = append(lines, m.dividerLine(maxWidth))
-			chips := make([]string, 0, 3)
-			if row.alertsBell {
-				chips = append(chips, m.styles.chipWarn.Render("! bell"))
-			}
-			if row.alertsActivity {
-				chips = append(chips, m.styles.chipWarn.Render("# activity"))
-			}
-			if row.alertsSilence {
-				chips = append(chips, m.styles.chipWarn.Render("~ silence"))
-			}
-			if len(chips) == 0 {
-				chips = append(chips, m.styles.chipWarn.Render("alerts"))
-			}
-			lines = append(lines, strings.Join(chips, " "))
+func (m Model) folderDetailLines(row treeRow, maxWidth int) []string {
+	folder := m.cfg.Folders[row.folderIndex]
+	sessions := m.sessions[row.folderIndex]
+	agents := len(buildAgentRows(row.folderIndex, folder, sessions))
+	terminals := len(buildTerminalRows(row.folderIndex, folder, sessions))
+	commands := len(folder.Commands)
+	runningCommands := 0
+	sessionByName := make(map[string]tmux.Session, len(sessions))
+	for _, session := range sessions {
+		sessionByName[session.Name] = session
+	}
+	for _, command := range folder.Commands {
+		session, ok := sessionByName[commandSessionName(folder, command.Name)]
+		if ok && commandSessionRunning(session) {
+			runningCommands++
 		}
 	}
 
-	return m.renderDetailLines(lines, innerH, paneWidth, dim)
+	const lw = 13
+	lines := []string{
+		m.styles.detailName.Render(folder.Name),
+		m.styles.detailMeta.Render(fmt.Sprintf("%d running agent%s · %d running terminal%s · %d commands", agents, pluralSuffix(agents), terminals, pluralSuffix(terminals), commands)),
+		m.dividerLine(maxWidth),
+		m.kvPad("Path", lw, m.styles.infoValue.Render(truncateMiddle(folder.Path, maxWidth-lw))),
+		"",
+		m.styles.infoLabel.Render("Overview"),
+		m.kvPad("Agents", lw, m.styles.infoValue.Render(fmt.Sprintf("%d running agent%s", agents, pluralSuffix(agents)))),
+		m.kvPad("Terminals", lw, m.styles.infoValue.Render(fmt.Sprintf("%d running terminal%s", terminals, pluralSuffix(terminals)))),
+		m.kvPad("Commands", lw, m.styles.infoValue.Render(fmt.Sprintf("%d commands", commands))),
+	}
+	if commands > 0 {
+		lines = append(lines, m.kvPad("Running", lw, m.styles.infoValue.Render(fmt.Sprintf("%d active command%s", runningCommands, pluralSuffix(runningCommands)))))
+	}
+	if len(sessions) == 0 && commands == 0 {
+		lines = append(lines, "", m.styles.emptyHint.Render("press n to create a terminal"))
+	}
+	return lines
+}
+
+func (m Model) sectionDetailLines(row treeRow, maxWidth int) []string {
+	folder := m.cfg.Folders[row.folderIndex]
+	sessions := m.sessions[row.folderIndex]
+	title := row.displayName
+	meta := ""
+	description := ""
+	action := ""
+
+	switch row.section {
+	case sectionAgents:
+		count := len(buildAgentRows(row.folderIndex, folder, sessions))
+		meta = fmt.Sprintf("%d running", count)
+		description = "Shows running agent instances for this folder."
+		action = "Press a to add and launch an agent"
+	case sectionTerminals:
+		count := len(buildTerminalRows(row.folderIndex, folder, sessions))
+		meta = fmt.Sprintf("%d running", count)
+		description = "Shows runtime terminals and legacy sessions for this folder."
+		action = "Press n to create a terminal"
+	case sectionCommands:
+		count := len(folder.Commands)
+		meta = fmt.Sprintf("%d configured", count)
+		description = "Shows configured commands whether they are running or stopped."
+		action = "Command lifecycle controls appear here"
+	}
+
+	lines := []string{
+		m.styles.detailName.Render(title),
+		m.styles.detailMeta.Render(meta),
+		m.dividerLine(maxWidth),
+	}
+	lines = append(lines, wrapLines([]string{m.styles.infoValue.Render(description)}, maxWidth)...)
+	if action != "" {
+		lines = append(lines, "")
+		lines = append(lines, wrapLines([]string{m.styles.detailMeta.Render(action)}, maxWidth)...)
+	}
+	return lines
+}
+
+func (m Model) commandDetailLines(row treeRow, maxWidth int) []string {
+	const lw = 13
+	statusText := m.styles.chipMuted.Render("stopped")
+	if row.status == "running" {
+		statusText = m.styles.chipPrimary.Render("running")
+	}
+
+	lines := []string{
+		m.styles.detailName.Render(truncateRight(row.displayName, maxWidth)),
+		statusText,
+		m.dividerLine(maxWidth),
+		m.kvPad("Command", lw, m.styles.infoValue.Render(truncateRight(row.commandText, maxWidth-lw))),
+		m.kvPad("Session", lw, m.styles.detailMeta.Render(truncateRight(row.sessionName, maxWidth-lw))),
+	}
+
+	if row.status != "running" {
+		return lines
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, m.instanceDetailBodyLines(row, maxWidth)...)
+	return lines
+}
+
+func (m Model) instanceDetailLines(row treeRow, maxWidth int) []string {
+	statusText := m.styles.detailMeta.Render("○ detached")
+	if row.attached {
+		statusText = m.styles.chipPrimary.Render("● attached")
+	}
+	windowLabel := "windows"
+	if row.windows == 1 {
+		windowLabel = "window"
+	}
+
+	lines := []string{
+		m.styles.detailName.Render(truncateRight(row.displayName, maxWidth)),
+		statusText + m.styles.detailMeta.Render("  ·  "+fmt.Sprintf("%d %s", row.windows, windowLabel)),
+		m.dividerLine(maxWidth),
+	}
+	lines = append(lines, m.instanceDetailBodyLines(row, maxWidth)...)
+	return lines
+}
+
+func (m Model) instanceDetailBodyLines(row treeRow, maxWidth int) []string {
+	const lw = 13
+	lines := make([]string, 0, 8)
+
+	running := strings.TrimSpace(row.currentCommand)
+	if running == "" || isShellCommand(running) {
+		lines = append(lines, m.kvPad("Running", lw, m.styles.detailMeta.Render("shell idle")))
+	} else {
+		lines = append(lines, m.kvPad("Running", lw, m.styles.infoValue.Render(truncateRight(running, maxWidth-lw))))
+	}
+
+	if title := paneDisplayTitle(row); title != "" {
+		lines = append(lines, m.kvPad("Title", lw, m.styles.infoValue.Render(truncateRight(title, maxWidth-lw))))
+	}
+
+	lines = append(lines, "")
+	if row.lastActivity > 0 {
+		d := time.Since(time.Unix(row.lastActivity, 0))
+		lines = append(lines, m.kvPad("Active", lw, m.styles.infoValue.Render(formatDuration(d))))
+	} else {
+		lines = append(lines, m.kvPad("Active", lw, m.styles.detailMeta.Render("unknown")))
+	}
+
+	if row.hasAlerts || row.alertsBell || row.alertsActivity || row.alertsSilence {
+		lines = append(lines, m.dividerLine(maxWidth))
+		chips := make([]string, 0, 3)
+		if row.alertsBell {
+			chips = append(chips, m.styles.chipWarn.Render("! bell"))
+		}
+		if row.alertsActivity {
+			chips = append(chips, m.styles.chipWarn.Render("# activity"))
+		}
+		if row.alertsSilence {
+			chips = append(chips, m.styles.chipWarn.Render("~ silence"))
+		}
+		if len(chips) == 0 {
+			chips = append(chips, m.styles.chipWarn.Render("alerts"))
+		}
+		lines = append(lines, strings.Join(chips, " "))
+	}
+
+	return lines
 }
 
 func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool) string {
@@ -1238,12 +1410,136 @@ func previewTickCmd() tea.Cmd {
 	})
 }
 
+func (m *Model) openAgentPicker(folder config.Folder) {
+	m.overlayMode = overlayAgentPicker
+	m.overlayFolderIndex = m.rows[m.selected].folderIndex
+	m.overlayIndex = 0
+	m.agentChoices = buildAgentChoices(m.cfg, folder)
+	m.errMsg = ""
+	m.statusMsg = ""
+}
+
+func buildAgentChoices(cfg config.Config, folder config.Folder) []agentChoice {
+	choices := make([]agentChoice, 0, len(folder.Agents)+len(cfg.Agents)+1)
+	seen := map[string]struct{}{}
+	for _, agent := range folder.Agents {
+		key := sanitizeLeaf(agent.Name)
+		seen[key] = struct{}{}
+		choices = append(choices, agentChoice{Label: agent.Name, Agent: agent})
+	}
+	for _, agent := range cfg.Agents {
+		key := sanitizeLeaf(agent.Name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		choices = append(choices, agentChoice{Label: agent.Name, Agent: agent, Persist: true})
+	}
+	choices = append(choices, agentChoice{Label: "Add new agent...", IsNew: true})
+	return choices
+}
+
+func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+
+	if m.overlayMode != overlayAgentPicker || len(m.agentChoices) == 0 {
+		m.overlayMode = overlayNone
+		m.agentChoices = nil
+		return m, nil
+	}
+
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.closeOverlay()
+		return m, nil
+	case "up", "k":
+		if m.overlayIndex > 0 {
+			m.overlayIndex--
+		}
+		return m, nil
+	case "down", "j":
+		if m.overlayIndex < len(m.agentChoices)-1 {
+			m.overlayIndex++
+		}
+		return m, nil
+	case "enter":
+		choice := m.agentChoices[m.overlayIndex]
+		folderIndex := m.overlayFolderIndex
+		if folderIndex < 0 || folderIndex >= len(m.cfg.Folders) {
+			m.closeOverlay()
+			m.errMsg = "select a folder"
+			return m, nil
+		}
+		if choice.IsNew {
+			m.closeOverlay()
+			m.pendingAgent = config.Agent{}
+			m.openPrompt(promptAddAgentName, "", "agent name")
+			return m, textinput.Blink
+		}
+		if choice.Persist {
+			m.addFolderAgent(folderIndex, choice.Agent)
+		}
+		folder := m.cfg.Folders[folderIndex]
+		m.closeOverlay()
+		return m, m.newAgentCmd(folderIndex, folder, choice.Agent, choice.Persist)
+	}
+
+	return m, nil
+}
+
+func (m *Model) closeOverlay() {
+	m.overlayMode = overlayNone
+	m.overlayIndex = 0
+	m.agentChoices = nil
+}
+
+func (m *Model) addFolderAgent(folderIndex int, agent config.Agent) {
+	key := sanitizeLeaf(agent.Name)
+	for _, existing := range m.cfg.Folders[folderIndex].Agents {
+		if sanitizeLeaf(existing.Name) == key {
+			return
+		}
+	}
+	m.cfg.Folders[folderIndex].Agents = append(m.cfg.Folders[folderIndex].Agents, agent)
+}
+
 func (m Model) selectedSessionRow() (treeRow, bool) {
 	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
 		return treeRow{}, false
 	}
 	row := m.rows[m.selected]
-	if row.typeOf != rowSession {
+	switch row.typeOf {
+	case rowAgentInstance, rowTerminalInstance:
+		return row, true
+	case rowCommand:
+		if row.status == "running" {
+			return row, true
+		}
+	}
+	return treeRow{}, false
+}
+
+func (m Model) selectedKillableSessionRow() (treeRow, bool) {
+	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
+		return treeRow{}, false
+	}
+	row := m.rows[m.selected]
+	if row.typeOf != rowAgentInstance && row.typeOf != rowTerminalInstance {
+		return treeRow{}, false
+	}
+	return row, true
+}
+
+func (m Model) selectedCommandRow() (treeRow, bool) {
+	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
+		return treeRow{}, false
+	}
+	row := m.rows[m.selected]
+	if row.typeOf != rowCommand {
 		return treeRow{}, false
 	}
 	return row, true
@@ -1254,6 +1550,9 @@ func (m Model) selectedFolder() (config.Folder, bool) {
 		return config.Folder{}, false
 	}
 	row := m.rows[m.selected]
+	if row.folderIndex < 0 || row.folderIndex >= len(m.cfg.Folders) {
+		return config.Folder{}, false
+	}
 	return m.cfg.Folders[row.folderIndex], true
 }
 
@@ -1345,9 +1644,11 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			value := strings.TrimSpace(m.prompt.Value())
-			m.prompt.Blur()
 			mode := m.promptMode
-			m.promptMode = promptNone
+			closePrompt := func() {
+				m.prompt.Blur()
+				m.promptMode = promptNone
+			}
 
 			switch mode {
 			case promptNewSession:
@@ -1360,6 +1661,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "session name is required"
 					return m, nil
 				}
+				closePrompt()
 				return m, m.newSessionCmd(folder, value)
 			case promptRenameSession:
 				row, ok := m.selectedSessionRow()
@@ -1372,6 +1674,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				folder := m.cfg.Folders[row.folderIndex]
+				closePrompt()
 				return m, m.renameSessionCmd(row.sessionName, folder.Namespace+"/"+sanitizeLeaf(value))
 			case promptRunCommand:
 				row, ok := m.selectedSessionRow()
@@ -1383,6 +1686,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "command cannot be empty"
 					return m, nil
 				}
+				closePrompt()
 				return m, m.sendCommandCmd(row.sessionName, value)
 			case promptAddFolder:
 				switch m.promptStep {
@@ -1435,9 +1739,35 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, textinput.Blink
 				case 2:
 					m.pendingFolder.EditorCommand = value
+					closePrompt()
 					return m, m.addFolderCmd(m.pendingFolder)
 				}
+			case promptAddAgentName:
+				if value == "" {
+					m.errMsg = "agent name is required"
+					return m, nil
+				}
+				m.pendingAgent.Name = value
+				m.openPrompt(promptAddAgentCommand, "", "agent launch command")
+				return m, textinput.Blink
+			case promptAddAgentCommand:
+				if value == "" {
+					m.errMsg = "agent command is required"
+					return m, nil
+				}
+				folderIndex := m.overlayFolderIndex
+				if folderIndex < 0 || folderIndex >= len(m.cfg.Folders) {
+					m.errMsg = "select a folder"
+					return m, nil
+				}
+				agent := config.Agent{Name: m.pendingAgent.Name, Command: value}
+				m.pendingAgent = config.Agent{}
+				m.addFolderAgent(folderIndex, agent)
+				folder := m.cfg.Folders[folderIndex]
+				closePrompt()
+				return m, m.newAgentCmd(folderIndex, folder, agent, true)
 			case promptFilter:
+				closePrompt()
 				m.filterQuery = value
 				m.rebuildRows()
 				var clearCmd tea.Cmd
@@ -1524,6 +1854,10 @@ func (m Model) promptTitle() string {
 		return "filter:"
 	case promptAddFolder:
 		return fmt.Sprintf("add folder (%d/3):", m.promptStep+1)
+	case promptAddAgentName:
+		return "agent name:"
+	case promptAddAgentCommand:
+		return "agent command:"
 	default:
 		return ""
 	}
@@ -1631,6 +1965,13 @@ func (m Model) totalManagedSessions() int {
 		total += len(sessions)
 	}
 	return total
+}
+
+func pluralSuffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func (m Model) kv(label, value string) string {
@@ -1831,6 +2172,54 @@ func (m Model) newSessionCmd(folder config.Folder, leaf string) tea.Cmd {
 			return actionResultMsg{err: err}
 		}
 		return actionResultMsg{status: "created " + fullName, attachTarget: fullName}
+	}
+}
+
+func (m Model) newTerminalCmd(folderIndex int, folder config.Folder) tea.Cmd {
+	index := nextTerminalIndex(folder, m.sessions[folderIndex])
+	name := terminalSessionName(folder, index)
+	return func() tea.Msg {
+		if err := m.client.NewSession(name, folder.Path); err != nil {
+			return actionResultMsg{err: err}
+		}
+		return actionResultMsg{status: "created " + name, attachTarget: name}
+	}
+}
+
+func (m Model) newAgentCmd(folderIndex int, folder config.Folder, agent config.Agent, persist bool) tea.Cmd {
+	index := nextAgentIndex(folder, agent.Name, m.sessions[folderIndex])
+	name := agentSessionName(folder, agent.Name, index)
+	return func() tea.Msg {
+		if persist {
+			if err := configfile.Save(m.cfgPath, m.cfg); err != nil {
+				return actionResultMsg{err: err}
+			}
+		}
+		if err := m.client.NewSessionWithCommand(name, folder.Path, agent.Command); err != nil {
+			return actionResultMsg{err: err}
+		}
+		return actionResultMsg{status: "created " + name, attachTarget: name}
+	}
+}
+
+func (m Model) startCommandCmd(folder config.Folder, row treeRow) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.client.NewSessionWithCommand(row.sessionName, folder.Path, row.commandText); err != nil {
+			return actionResultMsg{err: err}
+		}
+		return actionResultMsg{status: "started " + row.displayName}
+	}
+}
+
+func (m Model) restartCommandCmd(folder config.Folder, row treeRow) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.client.KillSession(row.sessionName); err != nil {
+			return actionResultMsg{err: err}
+		}
+		if err := m.client.NewSessionWithCommand(row.sessionName, folder.Path, row.commandText); err != nil {
+			return actionResultMsg{err: err}
+		}
+		return actionResultMsg{status: "restarted " + row.displayName}
 	}
 }
 
