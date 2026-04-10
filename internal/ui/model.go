@@ -92,16 +92,20 @@ const (
 // Semantic:  amber for detached, red for errors/danger only
 
 const (
-	colorPrimary    = "#73daca" // soft green — title, selection accent, attached
-	colorPrimaryDim = "#3b8070" // dim green — borders, secondary accents
-	colorText       = "#c9d1d9" // light gray — primary text
-	colorTextDim    = "#6e7681" // dim gray — labels, help text, metadata
-	colorTextMuted  = "#484f58" // very dim gray — borders, dividers
-	colorBg         = "#161b22" // dark bg (for selection row only)
-	colorBgSubtle   = "#21262d" // subtle bg — chips, panes
-	colorAmber      = "#d29922" // amber — detached status
+	colorPrimary    = "#5eead4" // bright mint green — title, selection accent, attached
+	colorPrimaryDim = "#2dd4a8" // medium green — folder headers
+	colorText       = "#d1d9e0" // warm light gray — primary text
+	colorTextDim    = "#768390" // medium gray — labels, help text, metadata
+	colorTextMuted  = "#444c56" // dim gray — section labels, dividers
+	colorTextFaint  = "#3b444d" // dim — pane borders, separators (visible on Nord etc.)
+	colorBg         = "#0d1117" // true dark bg
+	colorBgSubtle   = "#161b22" // main bg
+	colorBgElevated = "#1a3a35" // selection row bg — dark forest green tint
+	colorBgChip     = "#21262d" // chip/badge backgrounds
+	colorAmber      = "#e3b341" // warmer amber — detached, warnings
 	colorRed        = "#f85149" // red — errors, kill confirmation
-	colorWhite      = "#e6edf3" // bright white — emphasized text
+	colorBlue       = "#58a6ff" // blue — window counts
+	colorWhite      = "#ecf2f8" // bright white — emphasized names
 )
 
 type Model struct {
@@ -161,6 +165,7 @@ type styleSet struct {
 
 	// Tree rows
 	rowFolder       lipgloss.Style
+	rowFolderCount  lipgloss.Style // muted session count
 	rowSession      lipgloss.Style
 	rowSelected     lipgloss.Style
 	rowSelectedText lipgloss.Style
@@ -176,22 +181,24 @@ type styleSet struct {
 	alertIndicator    lipgloss.Style
 
 	// Detail pane
-	detailName    lipgloss.Style
-	detailMeta    lipgloss.Style
-	detailSection lipgloss.Style
-	infoLabel     lipgloss.Style
-	infoValue     lipgloss.Style
-	chipMuted     lipgloss.Style
-	chipPrimary   lipgloss.Style
-	chipWarn      lipgloss.Style
+	detailName          lipgloss.Style
+	detailMeta          lipgloss.Style
+	detailSection       lipgloss.Style
+	detailSectionHeader lipgloss.Style // uppercase section headers in detail pane
+	infoLabel           lipgloss.Style
+	infoValue           lipgloss.Style
+	chipMuted           lipgloss.Style
+	chipPrimary         lipgloss.Style
+	chipWarn            lipgloss.Style
 
 	// Footer / help bar
-	helpKey    lipgloss.Style
-	helpDesc   lipgloss.Style
-	helpSep    lipgloss.Style
-	footerOK   lipgloss.Style
-	footerErr  lipgloss.Style
-	footerWarn lipgloss.Style
+	helpBracket lipgloss.Style // bracket framing for help keys
+	helpKey     lipgloss.Style
+	helpDesc    lipgloss.Style
+	helpSep     lipgloss.Style
+	footerOK    lipgloss.Style
+	footerErr   lipgloss.Style
+	footerWarn  lipgloss.Style
 
 	// Prompt
 	promptLabel lipgloss.Style
@@ -207,16 +214,17 @@ func defaultStyles() styleSet {
 		// Header
 		headerTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPrimary)),
 		headerMeta:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		headerSep:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+		headerSep:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextFaint)),
 
-		// Panes
-		pane:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorTextMuted)).Padding(0, 1),
-		paneDim:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorTextMuted)).Padding(0, 1).Faint(true),
+		// Panes — very dim borders to recede behind content
+		pane:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorTextFaint)).Padding(0, 1),
+		paneDim:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorTextFaint)).Padding(0, 1).Faint(true),
 		paneTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPrimary)),
-		divider:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+		divider:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextFaint)),
 
 		// Tree rows
-		rowFolder:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorText)),
+		rowFolder:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
+		rowFolderCount:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
 		rowSession:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
 		rowSelected:     lipgloss.NewStyle(),
 		rowSelectedText: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
@@ -227,27 +235,29 @@ func defaultStyles() styleSet {
 		// Status indicators
 		statusDotAttached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
 		statusDotDetached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		windowCount:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		windowCount:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorBlue)),
 		commandDim:        lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Faint(true),
 		alertIndicator:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)).Bold(true),
 
 		// Detail pane
-		detailName:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
-		detailMeta:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		detailSection: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimaryDim)).Bold(true),
-		infoLabel:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		infoValue:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
-		chipMuted:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Background(lipgloss.Color(colorBgSubtle)).Padding(0, 1),
-		chipPrimary:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Background(lipgloss.Color(colorBgSubtle)).Padding(0, 1).Bold(true),
-		chipWarn:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)).Padding(0, 1).Bold(true),
+		detailName:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
+		detailMeta:          lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		detailSection:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		detailSectionHeader: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Bold(true),
+		infoLabel:           lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		infoValue:           lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
+		chipMuted:           lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		chipPrimary:         lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
+		chipWarn:            lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)).Bold(true),
 
 		// Footer / help bar
-		helpKey:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
-		helpDesc:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		helpSep:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
-		footerOK:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
-		footerErr:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)),
-		footerWarn: lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)),
+		helpBracket: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+		helpKey:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
+		helpDesc:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
+		helpSep:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextMuted)),
+		footerOK:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
+		footerErr:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)),
+		footerWarn:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber)),
 
 		// Prompt
 		promptLabel: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
@@ -605,13 +615,7 @@ func (m Model) View() string {
 		}
 		content = m.renderDetailPane(paneInnerH, paneInner, paneWidth, dimPanes)
 	} else if m.width > 70 {
-		leftWidth := (m.width * 30) / 100
-		if leftWidth < 30 {
-			leftWidth = 30
-		}
-		if leftWidth > 50 {
-			leftWidth = 50
-		}
+		leftWidth := 32
 		rightWidth := m.width - leftWidth - 1
 		if rightWidth < 20 {
 			rightWidth = 20
@@ -639,7 +643,8 @@ func (m Model) View() string {
 		content = lipgloss.Place(m.width, contentH, lipgloss.Center, lipgloss.Center, m.renderAgentPickerOverlay())
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, "", content, footer)
+	headerSep := m.styles.divider.Render(strings.Repeat("─", m.width))
+	return lipgloss.JoinVertical(lipgloss.Left, header, headerSep, content, footer)
 }
 
 func (m Model) renderHeader() string {
@@ -782,16 +787,14 @@ func (m Model) renderHelpBar() string {
 		}...)
 	}
 
-	parts := make([]string, 0, len(bindings)*2)
-	sep := m.styles.helpSep.Render(" · ")
-	for i, b := range bindings {
-		parts = append(parts, m.styles.helpKey.Render(b.key)+" "+m.styles.helpDesc.Render(b.desc))
-		if i < len(bindings)-1 {
-			parts = append(parts, sep)
-		}
+	parts := make([]string, 0, len(bindings))
+	lb := m.styles.helpBracket.Render("[")
+	rb := m.styles.helpBracket.Render("]")
+	for _, b := range bindings {
+		parts = append(parts, lb+m.styles.helpKey.Render(b.key)+rb+" "+m.styles.helpDesc.Render(b.desc))
 	}
 
-	return strings.Join(parts, "")
+	return strings.Join(parts, "  ")
 }
 
 func (m Model) selectedRow() (treeRow, bool) {
@@ -860,7 +863,7 @@ func (m Model) renderAgentPickerOverlay() string {
 		}
 		lines = append(lines, prefix+label)
 	}
-	return m.styledPane(strings.Join(lines, "\n"), width, false)
+	return m.styledPane(strings.Join(lines, "\n"), width, 0, false)
 }
 
 func findMatchingRowIndex(rows []treeRow, selected treeRow) (int, bool) {
@@ -888,7 +891,7 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		maxWidth = 10
 	}
 
-	bodyHeight := innerH - 1 // -1 for title
+	bodyHeight := innerH
 	if bodyHeight < 3 {
 		bodyHeight = 3
 	}
@@ -896,13 +899,33 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 	// Empty state
 	if len(m.rows) == 0 {
 		body := m.renderEmptyTree()
-		title := m.styles.paneTitle.Render("Sessions")
-		padded := padToHeight(title+"\n"+body, innerH)
-		return m.styledPane(padded, paneWidth, dim)
+		padded := padToHeight(body, innerH)
+		return m.styledPane(padded, paneWidth, innerH, dim)
 	}
 
+	// Compute exact dataRowBudget by walking rows from the selection
+	// and summing visual weights until we exhaust bodyHeight lines.
+	dataRowBudget := treeDataRowBudget(m.rows, m.selected, bodyHeight)
+
+	// Reserve space for scroll indicators
+	effectiveBodyH := bodyHeight
+	needsScroll := len(m.rows) > dataRowBudget
+	if needsScroll {
+		effectiveBodyH-- // reserve for possible ↓ indicator
+	}
+
+	dataRowBudget = treeDataRowBudget(m.rows, m.selected, effectiveBodyH)
+
 	rows := make([]string, 0, len(m.rows))
-	start, end := windowAround(m.selected, len(m.rows), bodyHeight)
+	start, end := windowAround(m.selected, len(m.rows), dataRowBudget)
+
+	if start > 0 && needsScroll {
+		effectiveBodyH-- // reserve for ↑ indicator
+		dataRowBudget = treeDataRowBudget(m.rows, m.selected, effectiveBodyH)
+		start, end = windowAround(m.selected, len(m.rows), dataRowBudget)
+	}
+
+	sepLine := m.styles.divider.Render(strings.Repeat("─", maxWidth))
 
 	visualLines := 0
 	actualEnd := end
@@ -912,16 +935,66 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		isKillTarget := m.confirmKillTarget != "" && row.sessionName == m.confirmKillTarget
 
 		if row.typeOf == rowFolder {
+			// Two blank lines before folder (except first visible)
+			if len(rows) > 0 {
+				for blankN := 0; blankN < 2; blankN++ {
+					visualLines++
+					if visualLines > effectiveBodyH {
+						actualEnd = i
+						break
+					}
+					rows = append(rows, "")
+				}
+				if visualLines > effectiveBodyH {
+					actualEnd = i
+					break
+				}
+			}
+
+			// Folder row
 			visualLines++
-			if visualLines > bodyHeight {
+			if visualLines > effectiveBodyH {
 				actualEnd = i
 				break
 			}
-			rows = append(rows, "")
+
+			plain := m.treeLineText(row, maxWidth)
+			if dim {
+				rows = append(rows, m.styles.rowDim.Render(plain))
+			} else if isSelected {
+				rows = append(rows, m.selectedLine(plain, maxWidth))
+			} else {
+				rows = append(rows, m.treeLineStyled(row, plain, maxWidth))
+			}
+
+			// Separator line after folder header
+			visualLines++
+			if visualLines > effectiveBodyH {
+				actualEnd = i + 1
+				break
+			}
+			if dim {
+				rows = append(rows, m.styles.rowDim.Render(strings.Repeat("─", maxWidth)))
+			} else {
+				rows = append(rows, sepLine)
+			}
+			continue
+		}
+
+		if row.typeOf == rowSection {
+			// One blank line before section labels, but not the first section after a folder
+			if i > 0 && m.rows[i-1].typeOf != rowFolder {
+				visualLines++
+				if visualLines > effectiveBodyH {
+					actualEnd = i
+					break
+				}
+				rows = append(rows, "")
+			}
 		}
 
 		visualLines++
-		if visualLines > bodyHeight {
+		if visualLines > effectiveBodyH {
 			actualEnd = i
 			break
 		}
@@ -930,7 +1003,7 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		if dim {
 			rows = append(rows, m.styles.rowDim.Render(plain))
 		} else if isSelected {
-			rows = append(rows, m.selectedLine("▎"+plain, maxWidth))
+			rows = append(rows, m.selectedLine(plain, maxWidth))
 		} else if isKillTarget {
 			rows = append(rows, m.styles.rowKillTarget.Render(padRight(plain, maxWidth)))
 		} else {
@@ -946,66 +1019,114 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		body += "\n" + m.styles.headerMeta.Render(fmt.Sprintf("  ↓ %d more", len(m.rows)-actualEnd))
 	}
 
-	title := m.styles.paneTitle.Render("Sessions")
-	padded := padToHeight(title+"\n"+body, innerH)
-	return m.styledPane(padded, paneWidth, dim)
+	padded := padToHeight(body, innerH)
+	return m.styledPane(padded, paneWidth, innerH, dim)
+}
+
+func sectionIcon(s sectionKind) string {
+	switch s {
+	case sectionAgents:
+		return "✦"
+	case sectionTerminals:
+		return "⊞"
+	case sectionCommands:
+		return "≡"
+	default:
+		return "·"
+	}
 }
 
 func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
 		count := len(m.sessions[row.folderIndex])
-		return truncateRight(fmt.Sprintf("▸ %s (%d)", row.displayName, count), maxWidth)
-	case rowSection:
-		return truncateRight("  "+row.displayName, maxWidth)
-	case rowCommand:
-		text := fmt.Sprintf("    %s · %s", row.displayName, row.status)
-		if row.status == "running" && row.windows > 0 {
-			text += fmt.Sprintf(" (%dw)", row.windows)
+		name := fmt.Sprintf("▸ %s", row.displayName)
+		countStr := fmt.Sprintf("%d", count)
+		pad := maxWidth - len(name) - len(countStr)
+		if pad < 1 {
+			pad = 1
 		}
-		return truncateRight(text, maxWidth)
+		return truncateRight(name+strings.Repeat(" ", pad)+countStr, maxWidth)
+	case rowSection:
+		return truncateRight(sectionIcon(row.section)+" "+row.displayName, maxWidth)
+	case rowCommand:
+		left := fmt.Sprintf("  %s", row.displayName)
+		right := "■"
+		if row.status == "running" {
+			right = "▶"
+		}
+		return treeJustify(left, right, maxWidth)
 	default:
 		dot := "○"
 		if row.attached {
 			dot = "●"
 		}
-		text := fmt.Sprintf("    %s %s", dot, row.displayName)
-		if row.windows > 0 {
-			text += fmt.Sprintf(" (%dw)", row.windows)
-		}
-		if alertStr := alertIndicatorStr(row); alertStr != "" {
-			text += " " + alertStr
-		}
-		return truncateRight(text, maxWidth)
+		left := fmt.Sprintf("  %s %s", dot, row.displayName)
+		right := alertIndicatorStr(row)
+		return treeJustify(left, right, maxWidth)
 	}
+}
+
+// treeJustify places left text on the left and right text flush-right,
+// like CSS justify-between, truncating left if needed.
+func treeJustify(left, right string, maxWidth int) string {
+	if right == "" {
+		return truncateRight(left, maxWidth)
+	}
+	gap := maxWidth - len(left) - len(right)
+	if gap < 1 {
+		left = truncateRight(left, maxWidth-len(right)-1)
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
-		return " " + m.styles.rowFolder.Render(plain)
-	case rowSection:
-		return " " + m.styles.detailSection.Render(plain)
-	case rowCommand:
-		status := m.styles.windowCount.Render(row.status)
-		base := "    " + m.styles.rowSession.Render(truncateRight(row.displayName, maxWidth-12)) + " · " + status
-		if row.status == "running" && row.windows > 0 {
-			base += " " + m.styles.windowCount.Render(fmt.Sprintf("(%dw)", row.windows))
+		count := len(m.sessions[row.folderIndex])
+		name := fmt.Sprintf("▸ %s", row.displayName)
+		countStr := fmt.Sprintf("%d", count)
+		pad := maxWidth - len(name) - len(countStr)
+		if pad < 1 {
+			pad = 1
 		}
-		return base
+		return m.styles.rowFolder.Render(name) + strings.Repeat(" ", pad) + m.styles.rowFolderCount.Render(countStr)
+	case rowSection:
+		return m.styles.detailSection.Render(plain)
+	case rowCommand:
+		leftStyled := "  " + m.styles.rowSession.Render(row.displayName)
+		leftPlain := fmt.Sprintf("  %s", row.displayName)
+		var rightStyled, rightPlain string
+		if row.status == "running" {
+			rightStyled = m.styles.statusDotAttached.Render("▶")
+			rightPlain = "▶"
+		} else {
+			rightStyled = m.styles.statusDotDetached.Render("■")
+			rightPlain = "■"
+		}
+		gap := maxWidth - len(leftPlain) - len(rightPlain)
+		if gap < 1 {
+			gap = 1
+		}
+		return leftStyled + strings.Repeat(" ", gap) + rightStyled
 	default:
 		dot := m.styles.statusDotDetached.Render("○")
 		if row.attached {
 			dot = m.styles.statusDotAttached.Render("●")
 		}
-		line := "    " + dot + " " + m.styles.rowSession.Render(row.displayName)
-		if row.windows > 0 {
-			line += " " + m.styles.windowCount.Render(fmt.Sprintf("(%dw)", row.windows))
+		leftStyled := "  " + dot + " " + m.styles.rowSession.Render(row.displayName)
+		leftPlain := fmt.Sprintf("  %s %s", "○", row.displayName)
+		alertStr := alertIndicatorStr(row)
+		if alertStr == "" {
+			return leftStyled
 		}
-		if alertStr := alertIndicatorStr(row); alertStr != "" {
-			line += " " + m.styles.alertIndicator.Render(alertStr)
+		rightStyled := m.styles.alertIndicator.Render(alertStr)
+		gap := maxWidth - len(leftPlain) - len(alertStr)
+		if gap < 1 {
+			gap = 1
 		}
-		return line
+		return leftStyled + strings.Repeat(" ", gap) + rightStyled
 	}
 }
 
@@ -1033,7 +1154,7 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 		title := m.styles.paneTitle.Render("Details")
 		hint := m.styles.emptyHint.Render("select a folder or session")
 		padded := padToHeight(title+"\n\n"+hint, innerH)
-		return m.styledPane(padded, paneWidth, dim)
+		return m.styledPane(padded, paneWidth, innerH, dim)
 	}
 
 	row := m.rows[m.selected]
@@ -1081,19 +1202,43 @@ func (m Model) folderDetailLines(row treeRow, maxWidth int) []string {
 	const lw = 13
 	lines := []string{
 		m.styles.detailName.Render(folder.Name),
-		m.styles.detailMeta.Render(fmt.Sprintf("%d running agent%s · %d running terminal%s · %d commands", agents, pluralSuffix(agents), terminals, pluralSuffix(terminals), commands)),
+		m.styles.detailMeta.Render(fmt.Sprintf("%d agent%s · %d terminal%s · %d command%s", agents, pluralSuffix(agents), terminals, pluralSuffix(terminals), commands, pluralSuffix(commands))),
 		m.dividerLine(maxWidth),
-		m.kvPad("Path", lw, m.styles.infoValue.Render(truncateMiddle(folder.Path, maxWidth-lw))),
 		"",
-		m.styles.infoLabel.Render("Overview"),
-		m.kvPad("Agents", lw, m.styles.infoValue.Render(fmt.Sprintf("%d running agent%s", agents, pluralSuffix(agents)))),
-		m.kvPad("Terminals", lw, m.styles.infoValue.Render(fmt.Sprintf("%d running terminal%s", terminals, pluralSuffix(terminals)))),
-		m.kvPad("Commands", lw, m.styles.infoValue.Render(fmt.Sprintf("%d commands", commands))),
+		m.styles.detailSectionHeader.Render("PATH"),
+		m.styles.infoValue.Render(truncateMiddle(folder.Path, maxWidth)),
+		"",
+		m.dividerLine(maxWidth),
+		"",
+		m.styles.detailSectionHeader.Render("OVERVIEW"),
+		m.kvPad("Agents", lw, m.styles.infoValue.Render(fmt.Sprintf("%d running", agents))),
+		m.kvPad("Terminals", lw, m.styles.infoValue.Render(fmt.Sprintf("%d running", terminals))),
 	}
 	if commands > 0 {
-		lines = append(lines, m.kvPad("Running", lw, m.styles.infoValue.Render(fmt.Sprintf("%d active command%s", runningCommands, pluralSuffix(runningCommands)))))
+		cmdSummary := fmt.Sprintf("%d configured", commands)
+		if runningCommands > 0 {
+			cmdSummary += fmt.Sprintf(", %d active", runningCommands)
+		}
+		lines = append(lines, m.kvPad("Commands", lw, m.styles.infoValue.Render(cmdSummary)))
+	} else {
+		lines = append(lines, m.kvPad("Commands", lw, m.styles.infoValue.Render("0 configured")))
 	}
-	if len(sessions) == 0 && commands == 0 {
+
+	// SESSIONS mini-table: list all sessions in this folder
+	agentRows := buildAgentRows(row.folderIndex, folder, sessions)
+	termRows := buildTerminalRows(row.folderIndex, folder, sessions)
+	cmdRows := buildCommandRows(row.folderIndex, folder, sessionByName)
+	allRows := make([]treeRow, 0, len(agentRows)+len(termRows)+len(cmdRows))
+	allRows = append(allRows, agentRows...)
+	allRows = append(allRows, termRows...)
+	allRows = append(allRows, cmdRows...)
+
+	if len(allRows) > 0 {
+		lines = append(lines, "", m.dividerLine(maxWidth), "", m.styles.detailSectionHeader.Render("SESSIONS"))
+		for _, r := range allRows {
+			lines = append(lines, m.sessionSummaryLine(r, maxWidth))
+		}
+	} else if len(sessions) == 0 && commands == 0 {
 		lines = append(lines, "", m.styles.emptyHint.Render("press n to create a terminal"))
 	}
 	return lines
@@ -1111,17 +1256,17 @@ func (m Model) sectionDetailLines(row treeRow, maxWidth int) []string {
 	case sectionAgents:
 		count := len(buildAgentRows(row.folderIndex, folder, sessions))
 		meta = fmt.Sprintf("%d running", count)
-		description = "Shows running agent instances for this folder."
+		description = "Running agent instances for this folder."
 		action = "Press a to add and launch an agent"
 	case sectionTerminals:
 		count := len(buildTerminalRows(row.folderIndex, folder, sessions))
 		meta = fmt.Sprintf("%d running", count)
-		description = "Shows runtime terminals and legacy sessions for this folder."
+		description = "Runtime terminals and legacy sessions for this folder."
 		action = "Press n to create a terminal"
 	case sectionCommands:
 		count := len(folder.Commands)
 		meta = fmt.Sprintf("%d configured", count)
-		description = "Shows configured commands whether they are running or stopped."
+		description = "Configured commands whether they are running or stopped."
 		action = "Command lifecycle controls appear here"
 	}
 
@@ -1149,6 +1294,8 @@ func (m Model) commandDetailLines(row treeRow, maxWidth int) []string {
 		m.styles.detailName.Render(truncateRight(row.displayName, maxWidth)),
 		statusText,
 		m.dividerLine(maxWidth),
+		"",
+		m.styles.detailSectionHeader.Render("COMMAND"),
 		m.kvPad("Command", lw, m.styles.infoValue.Render(truncateRight(row.commandText, maxWidth-lw))),
 		m.kvPad("Session", lw, m.styles.detailMeta.Render(truncateRight(row.sessionName, maxWidth-lw))),
 	}
@@ -1157,7 +1304,7 @@ func (m Model) commandDetailLines(row treeRow, maxWidth int) []string {
 		return lines
 	}
 
-	lines = append(lines, "")
+	lines = append(lines, "", m.dividerLine(maxWidth), "", m.styles.detailSectionHeader.Render("STATUS"))
 	lines = append(lines, m.instanceDetailBodyLines(row, maxWidth)...)
 	return lines
 }
@@ -1176,6 +1323,8 @@ func (m Model) instanceDetailLines(row treeRow, maxWidth int) []string {
 		m.styles.detailName.Render(truncateRight(row.displayName, maxWidth)),
 		statusText + m.styles.detailMeta.Render("  ·  "+fmt.Sprintf("%d %s", row.windows, windowLabel)),
 		m.dividerLine(maxWidth),
+		"",
+		m.styles.detailSectionHeader.Render("STATUS"),
 	}
 	lines = append(lines, m.instanceDetailBodyLines(row, maxWidth)...)
 	return lines
@@ -1205,7 +1354,7 @@ func (m Model) instanceDetailBodyLines(row treeRow, maxWidth int) []string {
 	}
 
 	if row.hasAlerts || row.alertsBell || row.alertsActivity || row.alertsSilence {
-		lines = append(lines, m.dividerLine(maxWidth))
+		lines = append(lines, "", m.dividerLine(maxWidth), "", m.styles.detailSectionHeader.Render("ALERTS"))
 		chips := make([]string, 0, 3)
 		if row.alertsBell {
 			chips = append(chips, m.styles.chipWarn.Render("! bell"))
@@ -1225,9 +1374,37 @@ func (m Model) instanceDetailBodyLines(row treeRow, maxWidth int) []string {
 	return lines
 }
 
+func (m Model) sessionSummaryLine(row treeRow, maxWidth int) string {
+	var icon, state string
+	switch row.typeOf {
+	case rowAgentInstance, rowTerminalInstance:
+		if row.attached {
+			icon = m.styles.statusDotAttached.Render("●")
+			state = "attached"
+		} else {
+			icon = m.styles.statusDotDetached.Render("○")
+			state = "detached"
+		}
+	case rowCommand:
+		if row.status == "running" {
+			icon = m.styles.statusDotAttached.Render("▶")
+			state = "running"
+		} else {
+			icon = m.styles.statusDotDetached.Render("■")
+			state = "stopped"
+		}
+	}
+	name := truncateRight(row.displayName, maxWidth-24)
+	wc := ""
+	if row.windows > 0 {
+		wc = m.styles.windowCount.Render(fmt.Sprintf("%dw", row.windows))
+	}
+	return icon + " " + m.styles.infoValue.Render(name) + "  " + m.styles.detailMeta.Render(state) + "  " + wc
+}
+
 func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool) string {
 	if len(lines) == 0 {
-		return m.styledPane("", paneWidth, dim)
+		return m.styledPane("", paneWidth, innerH, dim)
 	}
 	bodyHeight := innerH
 	if bodyHeight < 4 {
@@ -1260,7 +1437,7 @@ func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool
 	}
 
 	padded := padToHeight(body, innerH)
-	return m.styledPane(padded, paneWidth, dim)
+	return m.styledPane(padded, paneWidth, innerH, dim)
 }
 
 func truncateLines(lines []string, maxWidth int) []string {
@@ -1315,11 +1492,11 @@ func (m Model) renderPreviewPane(innerH, maxWidth, paneWidth int, dim bool) stri
 
 	if m.previewLoading {
 		padded := padToHeight(title+"\n\n"+m.styles.emptyHint.Render("capturing pane…"), innerH)
-		return m.styledPane(padded, paneWidth, dim)
+		return m.styledPane(padded, paneWidth, innerH, dim)
 	}
 	if m.previewErr != nil {
 		padded := padToHeight(title+"\n\n"+m.styles.footerErr.Render("error: "+m.previewErr.Error()), innerH)
-		return m.styledPane(padded, paneWidth, dim)
+		return m.styledPane(padded, paneWidth, innerH, dim)
 	}
 
 	content := sanitizeANSI(m.previewContent)
@@ -1867,7 +2044,7 @@ func (m Model) selectedLine(plain string, width int) string {
 	return m.styles.rowSelectedText.Width(width).Render(plain)
 }
 
-func (m Model) styledPane(content string, paneWidth int, dim bool) string {
+func (m Model) styledPane(content string, paneWidth, innerH int, dim bool) string {
 	// paneWidth is total outer width including border+padding.
 	// lipgloss Width includes padding but excludes border.
 	// border = 2 (left+right), so Width = paneWidth - 2.
@@ -1876,10 +2053,15 @@ func (m Model) styledPane(content string, paneWidth int, dim bool) string {
 	if w < 1 {
 		w = 1
 	}
+	style := m.styles.pane
 	if dim {
-		return m.styles.paneDim.Width(w).Render(content)
+		style = m.styles.paneDim
 	}
-	return m.styles.pane.Width(w).Render(content)
+	style = style.Width(w)
+	if innerH > 0 {
+		style = style.Height(innerH)
+	}
+	return style.Render(content)
 }
 
 func (m *Model) setStatus(msg string) tea.Cmd {
@@ -1935,6 +2117,58 @@ func (m Model) contentHeight() int {
 		h = 8
 	}
 	return h
+}
+
+// treeRowVisualWeight returns how many visual lines row at index i will
+// consume, including preceding blank lines and trailing separators.
+// isFirstVisible indicates whether this is the first row in the visible window.
+func treeRowVisualWeight(rows []treeRow, i int, isFirstVisible bool) int {
+	row := rows[i]
+	w := 1 // the row itself
+	if row.typeOf == rowFolder {
+		if !isFirstVisible {
+			w += 2 // two blank lines before non-first folder
+		}
+		w += 1 // separator after folder
+	} else if row.typeOf == rowSection {
+		if i > 0 && rows[i-1].typeOf != rowFolder {
+			w += 1 // blank line before section (not first after folder)
+		}
+	}
+	return w
+}
+
+// treeDataRowBudget computes how many data rows fit in maxVisual lines
+// by expanding outward from the selection, matching windowAround's behavior.
+func treeDataRowBudget(rows []treeRow, selected, maxVisual int) int {
+	if len(rows) == 0 || maxVisual <= 0 {
+		return 0
+	}
+
+	// Simulate: start by placing selected in the middle, expand outward.
+	// This mirrors what windowAround will produce.
+	count := 0
+	visual := 0
+
+	// First, walk forward from a rough start position
+	// Use a simple approach: try increasing budgets until visual weight exceeds maxVisual
+	for budget := 1; budget <= len(rows); budget++ {
+		start, end := windowAround(selected, len(rows), budget)
+		visual = 0
+		for i := start; i < end; i++ {
+			visual += treeRowVisualWeight(rows, i, i == start)
+		}
+		if visual > maxVisual {
+			// budget-1 was the last that fit
+			count = budget - 1
+			if count < 1 {
+				count = 1
+			}
+			return count
+		}
+	}
+	// Everything fits
+	return len(rows)
 }
 
 func windowAround(selected, total, maxItems int) (int, int) {

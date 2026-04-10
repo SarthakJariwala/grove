@@ -269,7 +269,7 @@ func TestRenderDetailPaneFolderSummarizesSections(t *testing.T) {
 
 	got := m.renderDetailPane(20, 80, 84, false)
 
-	for _, want := range []string{"API", "1 running agent", "1 running terminal", "2 commands"} {
+	for _, want := range []string{"API", "1 agent", "1 terminal", "2 commands", "OVERVIEW", "SESSIONS"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("detail pane = %q, want %q", got, want)
 		}
@@ -288,15 +288,16 @@ func TestRenderDetailPaneSectionAndCommandRowsAreTypeAware(t *testing.T) {
 	m := NewModel(cfg, "config.toml", fakeSessionManager{})
 	m.rebuildRows()
 
+	// rows: [0]=folder, [1]=Commands section, [2]=start command
 	m.setSelected(1)
 	sectionDetail := m.renderDetailPane(20, 80, 84, false)
-	for _, want := range []string{"Agents", "running agent instances", "Press a to add and launch an agent"} {
+	for _, want := range []string{"Commands", "configured", "Command lifecycle controls appear here"} {
 		if !strings.Contains(sectionDetail, want) {
 			t.Fatalf("section detail = %q, want %q", sectionDetail, want)
 		}
 	}
 
-	m.setSelected(4)
+	m.setSelected(2)
 	commandDetail := m.renderDetailPane(20, 80, 84, false)
 	for _, want := range []string{"start", "stopped", "make start"} {
 		if !strings.Contains(commandDetail, want) {
@@ -322,9 +323,16 @@ func TestRenderTreePaneShowsSectionHeadings(t *testing.T) {
 	m.rebuildRows()
 	got := m.renderTreePane(12, 60, 64, false)
 
-	for _, heading := range []string{"Agents", "Terminals", "Commands", "start", "stopped"} {
+	// Only Commands section should appear (Agents/Terminals are empty and collapsed)
+	for _, heading := range []string{"Commands", "start", "■"} {
 		if !strings.Contains(got, heading) {
 			t.Fatalf("tree view = %q, want %q", got, heading)
+		}
+	}
+	// Verify empty sections are hidden
+	for _, hidden := range []string{"Agents", "Terminals"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("tree view = %q, should not contain empty section %q", got, hidden)
 		}
 	}
 }
@@ -381,7 +389,9 @@ func TestSelectedHelpersAreRowTypeAware(t *testing.T) {
 	}
 	m.rebuildRows()
 
-	for _, selected := range []int{1, 2, 3, 4, 5, 6} {
+	// New row layout (empty sections collapsed):
+	// [0]=folder, [1]=Terminals, [2]=term-1, [3]=Commands, [4]=cmd-start, [5]=cmd-worker
+	for _, selected := range []int{1, 2, 3, 4, 5} {
 		m.setSelected(selected)
 		folder, ok := m.selectedFolder()
 		if !ok || folder.Namespace != "api" {
@@ -389,13 +399,13 @@ func TestSelectedHelpersAreRowTypeAware(t *testing.T) {
 		}
 	}
 
-	m.setSelected(5)
+	m.setSelected(4)
 	runningCommand, ok := m.selectedSessionRow()
 	if !ok || runningCommand.typeOf != rowCommand || runningCommand.sessionName != "api/cmd-start" {
 		t.Fatalf("selectedSessionRow() running command = (%#v, %v), want running command row", runningCommand, ok)
 	}
 
-	m.setSelected(6)
+	m.setSelected(5)
 	if row, ok := m.selectedSessionRow(); ok {
 		t.Fatalf("selectedSessionRow() on stopped command = (%#v, %v), want false", row, ok)
 	}
@@ -678,16 +688,13 @@ func TestRenderTreePaneDimSessionRows(t *testing.T) {
 		}},
 	}
 	m.rebuildRows()
+	m.setSelected(2) // select the session row
 
-	normal := m.renderTreePane(8, 60, 64, false)
 	dimmed := m.renderTreePane(8, 60, 64, true)
 
-	if normal == dimmed {
-		t.Fatal("dim=true output should differ from dim=false output")
-	}
-
-	// #73daca in truecolor ANSI = 38;2;115;218;202
-	colorGreen := "38;2;115;218;202"
+	// Dimmed pane should not contain the bright primary green
+	// #5eead4 in truecolor ANSI = 38;2;94;234;212
+	colorGreen := "38;2;94;234;212"
 	if strings.Contains(dimmed, colorGreen) {
 		t.Fatalf("dimmed tree pane should not contain bright green (%s), got:\n%s", colorGreen, dimmed)
 	}
@@ -711,9 +718,9 @@ func TestRenderTreePaneDimFolderRows(t *testing.T) {
 
 	dimmed := m.renderTreePane(8, 60, 64, true)
 
-	// #c9d1d9 in truecolor ANSI = 38;2;201;209;217
-	colorText := "38;2;201;209;217"
-	if strings.Contains(dimmed, colorText) {
-		t.Fatalf("dimmed tree pane should not contain folder text color (%s), got:\n%s", colorText, dimmed)
+	// #2dd4a8 (colorPrimaryDim for folder names) in truecolor ANSI = 38;2;45;212;168
+	colorFolder := "38;2;45;212;168"
+	if strings.Contains(dimmed, colorFolder) {
+		t.Fatalf("dimmed tree pane should not contain folder color (%s), got:\n%s", colorFolder, dimmed)
 	}
 }

@@ -23,44 +23,62 @@ func buildTreeRows(cfg config.Config, sessions map[int][]tmux.Session, sessionBy
 	rows := make([]treeRow, 0)
 	for folderIndex, folder := range cfg.Folders {
 		rows = append(rows, treeRow{typeOf: rowFolder, folderIndex: folderIndex, displayName: folder.Name})
-		rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionAgents, displayName: "Agents"})
-		rows = append(rows, buildAgentRows(folderIndex, folder, sessions[folderIndex])...)
-		rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionTerminals, displayName: "Terminals"})
-		rows = append(rows, buildTerminalRows(folderIndex, folder, sessions[folderIndex])...)
-		rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionCommands, displayName: "Commands"})
-		for _, command := range folder.Commands {
-			sessionName := commandSessionName(folder, command.Name)
-			session, ok := sessionByName[sessionName]
-			status := "stopped"
-			attached := false
-			windows := 0
-			if ok {
-				attached = session.Attached
-				windows = session.Windows
-				if commandSessionRunning(session) {
-					status = "running"
-				}
-			}
-			rows = append(rows, treeRow{
-				typeOf:         rowCommand,
-				section:        sectionCommands,
-				folderIndex:    folderIndex,
-				sessionName:    sessionName,
-				displayName:    command.Name,
-				commandText:    command.Command,
-				status:         status,
-				attached:       attached,
-				windows:        windows,
-				currentCommand: session.CurrentCommand,
-				paneTitle:      session.PaneTitle,
-				currentPath:    session.CurrentPath,
-				lastActivity:   session.LastActivity,
-				hasAlerts:      session.HasAlerts,
-				alertsBell:     session.AlertsBell,
-				alertsActivity: session.AlertsActivity,
-				alertsSilence:  session.AlertsSilence,
-			})
+
+		agentRows := buildAgentRows(folderIndex, folder, sessions[folderIndex])
+		if len(agentRows) > 0 {
+			rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionAgents, displayName: "Agents"})
+			rows = append(rows, agentRows...)
 		}
+
+		termRows := buildTerminalRows(folderIndex, folder, sessions[folderIndex])
+		if len(termRows) > 0 {
+			rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionTerminals, displayName: "Terminals"})
+			rows = append(rows, termRows...)
+		}
+
+		cmdRows := buildCommandRows(folderIndex, folder, sessionByName)
+		if len(folder.Commands) > 0 {
+			rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionCommands, displayName: "Commands"})
+			rows = append(rows, cmdRows...)
+		}
+	}
+	return rows
+}
+
+func buildCommandRows(folderIndex int, folder config.Folder, sessionByName map[string]tmux.Session) []treeRow {
+	rows := make([]treeRow, 0, len(folder.Commands))
+	for _, command := range folder.Commands {
+		sessionName := commandSessionName(folder, command.Name)
+		session, ok := sessionByName[sessionName]
+		status := "stopped"
+		attached := false
+		windows := 0
+		if ok {
+			attached = session.Attached
+			windows = session.Windows
+			if commandSessionRunning(session) {
+				status = "running"
+			}
+		}
+		rows = append(rows, treeRow{
+			typeOf:         rowCommand,
+			section:        sectionCommands,
+			folderIndex:    folderIndex,
+			sessionName:    sessionName,
+			displayName:    command.Name,
+			commandText:    command.Command,
+			status:         status,
+			attached:       attached,
+			windows:        windows,
+			currentCommand: session.CurrentCommand,
+			paneTitle:      session.PaneTitle,
+			currentPath:    session.CurrentPath,
+			lastActivity:   session.LastActivity,
+			hasAlerts:      session.HasAlerts,
+			alertsBell:     session.AlertsBell,
+			alertsActivity: session.AlertsActivity,
+			alertsSilence:  session.AlertsSilence,
+		})
 	}
 	return rows
 }
