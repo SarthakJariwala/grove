@@ -18,7 +18,7 @@ import (
 	"github.com/SarthakJariwala/grove/internal/tmux"
 )
 
-const refreshInterval = 2 * time.Second
+const refreshInterval = 500 * time.Millisecond
 const statusClearDelay = 1500 * time.Millisecond
 const previewRefreshInterval = 200 * time.Millisecond
 

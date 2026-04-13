@@ -115,6 +115,37 @@ func TestUpdateTickContinuesWhileFilterPromptOpen(t *testing.T) {
 	}
 }
 
+func TestTickCmdUsesShortGlobalRefreshInterval(t *testing.T) {
+	t.Parallel()
+
+	if refreshInterval != 500*time.Millisecond {
+		t.Fatalf("refreshInterval = %v, want %v", refreshInterval, 500*time.Millisecond)
+	}
+
+	cmd := tickCmd()
+	if cmd == nil {
+		t.Fatal("expected tick command")
+	}
+
+	start := time.Now()
+	msgCh := make(chan tea.Msg, 1)
+	go func() {
+		msgCh <- cmd()
+	}()
+
+	select {
+	case msg := <-msgCh:
+		if _, ok := msg.(time.Time); !ok {
+			t.Fatalf("tick message = %T, want time.Time", msg)
+		}
+		if elapsed := time.Since(start); elapsed > 1200*time.Millisecond {
+			t.Fatalf("tick elapsed = %v, want <= %v", elapsed, 1200*time.Millisecond)
+		}
+	case <-time.After(1200 * time.Millisecond):
+		t.Fatal("timed out waiting for tick within 1200ms")
+	}
+}
+
 func TestRunCommandPromptDoesNotDriftToReplacementSession(t *testing.T) {
 	t.Parallel()
 
