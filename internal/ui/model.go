@@ -382,14 +382,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterQuery = ""
 				m.rebuildRows()
 				clearCmd := m.setStatus("filter cleared")
-				return m, clearCmd
+				return m, tea.Batch(clearCmd, m.syncSelectionPreview(true, true))
 			}
 			return m, nil
 		case "up", "k":
-			m.setSelected(m.selected - 1)
+			if m.setSelected(m.selected - 1) {
+				return m, m.syncSelectionPreview(true, true)
+			}
 			return m, nil
 		case "down", "j":
-			m.setSelected(m.selected + 1)
+			if m.setSelected(m.selected + 1) {
+				return m, m.syncSelectionPreview(true, true)
+			}
 			return m, nil
 		case "r":
 			return m, m.loadSessionsCmd()
@@ -523,7 +527,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.detailMode == detailPreview {
 			return m, m.reconcilePreviewAfterLoad()
 		}
-		return m, nil
+		return m, m.syncSelectionPreview(true, false)
 
 	case actionResultMsg:
 		if msg.err != nil {
@@ -551,9 +555,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
 
 	case paneCapturedMsg:
-		if m.detailMode != detailPreview {
-			return m, nil
-		}
 		if msg.seq != m.previewSeq || msg.target != m.previewCaptureTarget() {
 			return m, nil
 		}
@@ -1215,7 +1216,7 @@ func (m Model) renderDetailPane(innerH, maxWidth, paneWidth int, dim bool) strin
 
 	row := m.rows[m.selected]
 
-	if m.detailMode == detailPreview {
+	if m.detailMode == detailPreview || m.shouldAutoPreview() {
 		return m.renderPreviewPane(innerH, maxWidth, paneWidth, dim)
 	}
 
@@ -1715,6 +1716,14 @@ func (m Model) selectedSessionRow() (treeRow, bool) {
 	return treeRow{}, false
 }
 
+func (m Model) shouldAutoPreview() bool {
+	if m.detailMode == detailPreview {
+		return false
+	}
+	_, ok := m.selectedSessionRow()
+	return ok
+}
+
 func (m Model) selectedKillableSessionRow() (treeRow, bool) {
 	if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
 		return treeRow{}, false
@@ -1748,6 +1757,56 @@ func (m Model) selectedFolder() (config.Folder, bool) {
 	return m.cfg.Folders[row.folderIndex], true
 }
 
+func (m *Model) syncSelectionPreview(force, showLoading bool) tea.Cmd {
+	if m.detailMode == detailPreview {
+		return nil
+	}
+
+	row, ok := m.selectedSessionRow()
+	if !ok {
+		m.clearSelectionPreview()
+		return nil
+	}
+
+	prevSession := m.previewSession
+	prevWindow := m.previewWindow
+
+	m.previewSession = row.sessionName
+	m.previewWindow = m.resolvePreviewWindow(row.sessionName, prevWindow)
+
+	targetChanged := prevSession != m.previewSession || prevWindow != m.previewWindow
+	if !force && !targetChanged && m.previewContent != "" && m.previewErr == nil {
+		return nil
+	}
+
+	m.previewSeq++
+	m.previewInFlight = false
+	return m.beginPreviewCapture(showLoading)
+}
+
+func (m *Model) clearSelectionPreview() {
+	m.previewSession = ""
+	m.previewWindow = -1
+	m.previewLoading = false
+	m.previewErr = nil
+	m.previewContent = ""
+	m.previewInFlight = false
+}
+
+func (m Model) resolvePreviewWindow(sessionName string, current int) int {
+	windows := m.sessionWindows[sessionName]
+	if len(windows) == 0 {
+		return -1
+	}
+	if indexOfInt(windows, current) >= 0 {
+		return current
+	}
+	if active, ok := m.activeWindows[sessionName]; ok && indexOfInt(windows, active) >= 0 {
+		return active
+	}
+	return windows[0]
+}
+
 func (m Model) updateKillConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -1778,7 +1837,7 @@ func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.exitPreview()
-		return m, nil
+		return m, m.syncSelectionPreview(true, true)
 	case "left":
 		return m, m.movePreviewWindow(-1)
 	case "right":
@@ -1968,7 +2027,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					clearCmd = m.setStatus("filter set: " + value)
 				}
-				return m, clearCmd
+				return m, tea.Batch(clearCmd, m.syncSelectionPreview(true, true))
 			}
 		}
 	}
@@ -2100,11 +2159,11 @@ func indexOfInt(values []int, needle int) int {
 	return -1
 }
 
-func (m *Model) setSelected(next int) {
+func (m *Model) setSelected(next int) bool {
 	if len(m.rows) == 0 {
 		m.selected = 0
 		m.detailScroll = 0
-		return
+		return false
 	}
 	if next < 0 {
 		next = 0
@@ -2112,10 +2171,12 @@ func (m *Model) setSelected(next int) {
 	if next >= len(m.rows) {
 		next = len(m.rows) - 1
 	}
+	changed := next != m.selected
 	if next != m.selected {
 		m.detailScroll = 0
 	}
 	m.selected = next
+	return changed
 }
 
 func (m Model) contentHeight() int {

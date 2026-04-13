@@ -217,7 +217,7 @@ func TestRenderTreePaneOmitsSessionRuntimeMetadata(t *testing.T) {
 	}
 }
 
-func TestRenderDetailPaneSessionKeepsOnlyOperationalFields(t *testing.T) {
+func TestInstanceDetailLinesKeepOnlyOperationalFields(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Folders: []config.Folder{{Name: "SQL", Path: "/tmp/sql", Namespace: "sql"}}}
@@ -236,18 +236,52 @@ func TestRenderDetailPaneSessionKeepsOnlyOperationalFields(t *testing.T) {
 	m.rebuildRows()
 	m.setSelected(3)
 
-	got := m.renderDetailPane(20, 80, 84, false)
+	row, ok := m.selectedSessionRow()
+	if !ok {
+		t.Fatal("expected selected session row")
+	}
+	got := strings.Join(m.instanceDetailLines(row, 80), "\n")
 
 	for _, removed := range []string{"Full name", "Folder:", "Path:"} {
 		if strings.Contains(got, removed) {
-			t.Fatalf("detail pane = %q, should not include %q", got, removed)
+			t.Fatalf("detail lines = %q, should not include %q", got, removed)
 		}
 	}
 
 	for _, keep := range []string{"Running", "Active", "activity", "node"} {
 		if !strings.Contains(got, keep) {
-			t.Fatalf("detail pane = %q, want %q", got, keep)
+			t.Fatalf("detail lines = %q, want %q", got, keep)
 		}
+	}
+}
+
+func TestRenderDetailPaneSessionShowsPreviewInNormalMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{Name: "SQL", Path: "/tmp/sql", Namespace: "sql"}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:           "sql/sdk",
+			Windows:        2,
+			CurrentCommand: "node",
+		}},
+	}
+	m.previewSession = "sql/sdk"
+	m.previewWindow = 1
+	m.previewContent = "top line\npreview output"
+	m.rebuildRows()
+	m.setSelected(1)
+
+	got := m.renderDetailPane(20, 80, 84, false)
+
+	for _, want := range []string{"Preview", "preview output"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("detail pane = %q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Running") {
+		t.Fatalf("detail pane = %q, should not include session detail labels", got)
 	}
 }
 
@@ -530,7 +564,7 @@ func TestSelectedHelpersAreRowTypeAware(t *testing.T) {
 	}
 }
 
-func TestRenderDetailPaneDerivesAlertsFromFlags(t *testing.T) {
+func TestInstanceDetailLinesDeriveAlertsFromFlags(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
@@ -546,9 +580,13 @@ func TestRenderDetailPaneDerivesAlertsFromFlags(t *testing.T) {
 	m.rebuildRows()
 	m.setSelected(3)
 
-	got := m.renderDetailPane(20, 80, 84, false)
+	row, ok := m.selectedSessionRow()
+	if !ok {
+		t.Fatal("expected selected session row")
+	}
+	got := strings.Join(m.instanceDetailLines(row, 80), "\n")
 	if !strings.Contains(got, "activity") {
-		t.Fatalf("detail pane = %q, want derived alert chip", got)
+		t.Fatalf("detail lines = %q, want derived alert chip", got)
 	}
 }
 

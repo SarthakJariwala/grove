@@ -120,6 +120,42 @@ func TestUpdateKillConfirmFlow(t *testing.T) {
 	}
 }
 
+func TestUpdateNavigationStartsAutoPreviewForSelectedSession(t *testing.T) {
+	t.Parallel()
+
+	fake := &trackingSessionManager{}
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fake)
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:           "api/one",
+			CurrentCommand: "bash",
+		}},
+	}
+	m.sessionWindows = map[string][]int{"api/one": {0, 2}}
+	m.activeWindows = map[string]int{"api/one": 2}
+	m.rebuildRows()
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got := model.(Model)
+
+	if got.detailMode != detailNormal {
+		t.Fatalf("detailMode = %v, want detailNormal", got.detailMode)
+	}
+	if got.previewSession != "api/one" {
+		t.Fatalf("previewSession = %q, want api/one", got.previewSession)
+	}
+	if got.previewWindow != 2 {
+		t.Fatalf("previewWindow = %d, want 2", got.previewWindow)
+	}
+	if cmd == nil {
+		t.Fatal("expected capture command")
+	}
+	_ = cmd()
+	if len(fake.captured) != 1 || fake.captured[0] != "api/one:2" {
+		t.Fatalf("captured targets = %#v, want [api/one:2]", fake.captured)
+	}
+}
+
 func TestUpdateNCreatesManagedTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -525,6 +561,28 @@ func TestUpdatePreviewLeftRightCyclesWindows(t *testing.T) {
 	_ = cmd()
 	if len(fake.captured) != 2 || fake.captured[1] != "api/one:0" {
 		t.Fatalf("captured targets = %#v, want second target api/one:0", fake.captured)
+	}
+}
+
+func TestPaneCapturedMsgUpdatesAutoPreviewOutsideExplicitMode(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", &trackingSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{
+			Name:           "api/one",
+			CurrentCommand: "bash",
+		}},
+	}
+	m.rebuildRows()
+	m.setSelected(1)
+	m.previewSession = "api/one"
+	m.previewSeq = 3
+
+	updated, _ := m.Update(paneCapturedMsg{target: "api/one", content: "preview", seq: 3})
+	got := updated.(Model)
+	if got.previewContent != "preview" {
+		t.Fatalf("previewContent = %q, want preview", got.previewContent)
 	}
 }
 
