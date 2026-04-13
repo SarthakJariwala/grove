@@ -90,7 +90,7 @@ func TestUpdateKillConfirmFlow(t *testing.T) {
 	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fake)
 	m.sessions = map[int][]tmux.Session{0: {{Name: "api/one"}}}
 	m.rebuildRows()
-	m.setSelected(3)
+	m.setSelected(1)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
 	withConfirm := model.(Model)
@@ -177,6 +177,28 @@ func TestUpdateAOpensAgentPicker(t *testing.T) {
 	}
 }
 
+func TestUpdateAOnChildRowRequiresFolderSelection(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "start", Command: "make start"}},
+	}}}, "config.toml", &trackingSessionManager{})
+	m.rebuildRows()
+	m.setSelected(1) // [0]=folder, [1]=command
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got := model.(Model)
+	if cmd != nil {
+		t.Fatal("expected no command when add-agent is used on a child row")
+	}
+	if got.errMsg != "select a folder" {
+		t.Fatalf("errMsg = %q, want %q", got.errMsg, "select a folder")
+	}
+}
+
 func TestConfirmAgentPickerPersistsAndLaunchesManagedAgent(t *testing.T) {
 	t.Parallel()
 
@@ -250,7 +272,7 @@ func TestAddNewAgentPromptPreservesSelectedFolder(t *testing.T) {
 	fake := &trackingSessionManager{}
 	m := NewModel(cfg, cfgPath, fake)
 	m.rebuildRows()
-	m.setSelected(4)
+	m.setSelected(1)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	withOverlay := model.(Model)
@@ -344,7 +366,7 @@ func TestUpdateSStartsStoppedCommandWithoutAttaching(t *testing.T) {
 		Commands:  []config.Command{{Name: "start", Command: "make start"}},
 	}}}, "config.toml", fake)
 	m.rebuildRows()
-	m.setSelected(4)
+	m.setSelected(1)
 
 	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	_ = model.(Model)
