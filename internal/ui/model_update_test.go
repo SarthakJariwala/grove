@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,6 +20,8 @@ type trackingSessionManager struct {
 	created  []string
 	launched []string
 	commands []string
+	sentTo   []string
+	sentCmds []string
 }
 
 func (f *trackingSessionManager) ListSessions() ([]tmux.Session, error) { return nil, nil }
@@ -36,7 +39,11 @@ func (f *trackingSessionManager) NewSessionWithCommand(name, cwd, command string
 	return nil
 }
 
-func (f *trackingSessionManager) SendKeys(target, command string) error { return nil }
+func (f *trackingSessionManager) SendKeys(target, command string) error {
+	f.sentTo = append(f.sentTo, target)
+	f.sentCmds = append(f.sentCmds, command)
+	return nil
+}
 
 func (f *trackingSessionManager) RenameSession(oldName, newName string) error { return nil }
 
@@ -64,6 +71,90 @@ func TestUpdateSlashOpensFilterPrompt(t *testing.T) {
 
 	if got.promptMode != promptFilter {
 		t.Fatalf("promptMode = %v, want promptFilter", got.promptMode)
+	}
+}
+
+func TestUpdateTickContinuesWhileFilterPromptOpen(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", &trackingSessionManager{})
+	m.openPrompt(promptFilter, "", "filter folders and sessions")
+
+	model, cmd := m.Update(time.Now())
+	got := model.(Model)
+
+	if got.promptMode != promptFilter {
+		t.Fatalf("promptMode = %v, want promptFilter", got.promptMode)
+	}
+	if cmd == nil {
+		t.Fatal("expected refresh command while filter prompt is open")
+	}
+
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want tea.BatchMsg", cmd())
+	}
+	if len(batch) != 2 {
+		t.Fatalf("len(batch) = %d, want 2 refresh commands", len(batch))
+	}
+
+	msgCh := make(chan tea.Msg, len(batch))
+	for _, subcmd := range batch {
+		go func(c tea.Cmd) {
+			msgCh <- c()
+		}(subcmd)
+	}
+
+	select {
+	case msg := <-msgCh:
+		if _, ok := msg.(sessionsLoadedMsg); !ok {
+			t.Fatalf("first completed batch message = %T, want sessionsLoadedMsg", msg)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for sessions refresh command")
+	}
+}
+
+func TestRunCommandPromptDoesNotDriftToReplacementSession(t *testing.T) {
+	t.Parallel()
+
+	fake := &trackingSessionManager{}
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fake)
+	m.sessions = map[int][]tmux.Session{
+		0: {{Name: "api/one"}},
+	}
+	m.rebuildRows()
+	m.setSelected(1)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	withPrompt := model.(Model)
+	if withPrompt.promptMode != promptRunCommand {
+		t.Fatalf("promptMode = %v, want promptRunCommand", withPrompt.promptMode)
+	}
+
+	reloadedModel, _ := withPrompt.Update(sessionsLoadedMsg{
+		sessions: map[int][]tmux.Session{
+			0: {{Name: "api/two"}},
+		},
+		panesFresh: true,
+	})
+	reloaded := reloadedModel.(Model)
+	reloaded.prompt.SetValue("pwd")
+
+	finalModel, cmd := reloaded.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	final := finalModel.(Model)
+
+	if len(fake.sentTo) != 0 {
+		t.Fatalf("sentTo = %#v, want no command sent to replacement session", fake.sentTo)
+	}
+	if cmd != nil {
+		t.Fatal("expected no send command when original prompt target is gone")
+	}
+	if final.promptMode != promptRunCommand {
+		t.Fatalf("promptMode = %v, want promptRunCommand to remain open", final.promptMode)
+	}
+	if final.errMsg == "" {
+		t.Fatal("expected error when original prompt target no longer exists")
 	}
 }
 

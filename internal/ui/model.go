@@ -153,6 +153,7 @@ type Model struct {
 
 	prompt        textinput.Model
 	promptMode    promptMode
+	promptTarget  string
 	promptStep    int
 	pendingFolder config.Folder
 	pendingAgent  config.Agent
@@ -354,163 +355,13 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.promptMode != promptNone {
-		return m.updatePrompt(msg)
-	}
-	if m.overlayMode != overlayNone {
-		return m.updateOverlay(msg)
-	}
-	if m.confirmKillTarget != "" {
-		return m.updateKillConfirm(msg)
-	}
-
+	// Handle background/system messages before routing input to modal states so
+	// periodic refreshes and async results continue to flow while prompts are open.
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-
-	case tea.KeyMsg:
-		if m.detailMode == detailPreview {
-			return m.updatePreview(msg)
-		}
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "esc":
-			if m.filterQuery != "" {
-				m.filterQuery = ""
-				m.rebuildRows()
-				clearCmd := m.setStatus("filter cleared")
-				return m, tea.Batch(clearCmd, m.syncSelectionPreview(true, true))
-			}
-			return m, nil
-		case "up", "k":
-			if m.setSelected(m.selected - 1) {
-				return m, m.syncSelectionPreview(true, true)
-			}
-			return m, nil
-		case "down", "j":
-			if m.setSelected(m.selected + 1) {
-				return m, m.syncSelectionPreview(true, true)
-			}
-			return m, nil
-		case "r":
-			return m, m.loadSessionsCmd()
-		case "/":
-			m.openPrompt(promptFilter, m.filterQuery, "filter folders and sessions")
-			return m, textinput.Blink
-		case "pgdown", "ctrl+f":
-			m.detailScroll += m.contentHeight() / 2
-			return m, nil
-		case "pgup", "ctrl+b":
-			m.detailScroll -= m.contentHeight() / 2
-			if m.detailScroll < 0 {
-				m.detailScroll = 0
-			}
-			return m, nil
-		case "n":
-			folder, ok := m.selectedFolder()
-			if !ok {
-				m.errMsg = "select a folder or one of its sections"
-				return m, nil
-			}
-			return m, m.newTerminalCmd(m.rows[m.selected].folderIndex, folder)
-		case "a":
-			row, ok := m.selectedRow()
-			if !ok || row.typeOf != rowFolder {
-				m.errMsg = "select a folder"
-				return m, nil
-			}
-			folder, ok := m.selectedFolder()
-			if !ok {
-				m.errMsg = "select a folder"
-				return m, nil
-			}
-			m.openAgentPicker(folder)
-			return m, nil
-		case "s":
-			row, ok := m.selectedCommandRow()
-			if !ok || row.status == "running" {
-				return m, nil
-			}
-			folder := m.cfg.Folders[row.folderIndex]
-			return m, m.startCommandCmd(folder, row)
-		case "x":
-			row, ok := m.selectedCommandRow()
-			if !ok || row.status != "running" {
-				return m, nil
-			}
-			return m, m.killSessionCmd(row.sessionName)
-		case "R":
-			row, ok := m.selectedCommandRow()
-			if !ok {
-				return m, nil
-			}
-			folder := m.cfg.Folders[row.folderIndex]
-			if row.status == "running" {
-				return m, m.restartCommandCmd(folder, row)
-			}
-			return m, m.startCommandCmd(folder, row)
-		case "c":
-			_, ok := m.selectedSessionRow()
-			if !ok {
-				m.errMsg = "select a session to run command"
-				return m, nil
-			}
-			m.openPrompt(promptRunCommand, "", "command to run")
-			return m, textinput.Blink
-		case "K":
-			row, ok := m.selectedKillableSessionRow()
-			if !ok {
-				m.errMsg = "select an agent or terminal to kill"
-				return m, nil
-			}
-			m.confirmKillTarget = row.sessionName
-			m.statusMsg = ""
-			m.errMsg = ""
-			return m, nil
-		case "A":
-			m.promptStep = 0
-			m.pendingFolder = config.Folder{}
-			m.openPrompt(promptAddFolder, "", "folder name")
-			return m, textinput.Blink
-		case "v":
-			_, ok := m.selectedSessionRow()
-			if !ok {
-				m.errMsg = "select a session to preview"
-				return m, nil
-			}
-			m.detailMode = detailPreview
-			return m, tea.Batch(m.startPreview(), previewTickCmd())
-		case "e":
-			folder, ok := m.selectedFolder()
-			if !ok {
-				m.errMsg = "select a folder or session"
-				return m, nil
-			}
-			cmd := m.resolveEditorCommand(folder)
-			if cmd == "" {
-				m.errMsg = "no editor configured; set editor_command in config or $EDITOR"
-				return m, nil
-			}
-			dir := folder.Path
-			if row, ok := m.selectedSessionRow(); ok && row.currentPath != "" {
-				dir = row.currentPath
-			}
-			return m, m.openEditorInDir(cmd, dir)
-		case "enter":
-			row, ok := m.selectedSessionRow()
-			if !ok {
-				m.errMsg = "select a running session"
-				return m, nil
-			}
-			m.statusMsg = "attached to " + row.sessionName + " (detach with Ctrl-b d)"
-			m.errMsg = ""
-			return m, tea.ExecProcess(m.client.AttachCommand(row.sessionName), func(err error) tea.Msg {
-				return attachedMsg{err: err}
-			})
-		}
 
 	case sessionsLoadedMsg:
 		if msg.err != nil {
@@ -596,6 +447,161 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case time.Time:
 		return m, tea.Batch(tickCmd(), m.loadSessionsCmd())
+	}
+
+	if m.promptMode != promptNone {
+		return m.updatePrompt(msg)
+	}
+	if m.overlayMode != overlayNone {
+		return m.updateOverlay(msg)
+	}
+	if m.confirmKillTarget != "" {
+		return m.updateKillConfirm(msg)
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if m.detailMode == detailPreview {
+			return m.updatePreview(msg)
+		}
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "esc":
+			if m.filterQuery != "" {
+				m.filterQuery = ""
+				m.rebuildRows()
+				clearCmd := m.setStatus("filter cleared")
+				return m, tea.Batch(clearCmd, m.syncSelectionPreview(true, true))
+			}
+			return m, nil
+		case "up", "k":
+			if m.setSelected(m.selected - 1) {
+				return m, m.syncSelectionPreview(true, true)
+			}
+			return m, nil
+		case "down", "j":
+			if m.setSelected(m.selected + 1) {
+				return m, m.syncSelectionPreview(true, true)
+			}
+			return m, nil
+		case "r":
+			return m, m.loadSessionsCmd()
+		case "/":
+			m.openPrompt(promptFilter, m.filterQuery, "filter folders and sessions")
+			return m, textinput.Blink
+		case "pgdown", "ctrl+f":
+			m.detailScroll += m.contentHeight() / 2
+			return m, nil
+		case "pgup", "ctrl+b":
+			m.detailScroll -= m.contentHeight() / 2
+			if m.detailScroll < 0 {
+				m.detailScroll = 0
+			}
+			return m, nil
+		case "n":
+			folder, ok := m.selectedFolder()
+			if !ok {
+				m.errMsg = "select a folder or one of its sections"
+				return m, nil
+			}
+			return m, m.newTerminalCmd(m.rows[m.selected].folderIndex, folder)
+		case "a":
+			row, ok := m.selectedRow()
+			if !ok || row.typeOf != rowFolder {
+				m.errMsg = "select a folder"
+				return m, nil
+			}
+			folder, ok := m.selectedFolder()
+			if !ok {
+				m.errMsg = "select a folder"
+				return m, nil
+			}
+			m.openAgentPicker(folder)
+			return m, nil
+		case "s":
+			row, ok := m.selectedCommandRow()
+			if !ok || row.status == "running" {
+				return m, nil
+			}
+			folder := m.cfg.Folders[row.folderIndex]
+			return m, m.startCommandCmd(folder, row)
+		case "x":
+			row, ok := m.selectedCommandRow()
+			if !ok || row.status != "running" {
+				return m, nil
+			}
+			return m, m.killSessionCmd(row.sessionName)
+		case "R":
+			row, ok := m.selectedCommandRow()
+			if !ok {
+				return m, nil
+			}
+			folder := m.cfg.Folders[row.folderIndex]
+			if row.status == "running" {
+				return m, m.restartCommandCmd(folder, row)
+			}
+			return m, m.startCommandCmd(folder, row)
+		case "c":
+			row, ok := m.selectedSessionRow()
+			if !ok {
+				m.errMsg = "select a session to run command"
+				return m, nil
+			}
+			m.promptTarget = row.sessionName
+			m.openPrompt(promptRunCommand, "", "command to run")
+			return m, textinput.Blink
+		case "K":
+			row, ok := m.selectedKillableSessionRow()
+			if !ok {
+				m.errMsg = "select an agent or terminal to kill"
+				return m, nil
+			}
+			m.confirmKillTarget = row.sessionName
+			m.statusMsg = ""
+			m.errMsg = ""
+			return m, nil
+		case "A":
+			m.promptStep = 0
+			m.pendingFolder = config.Folder{}
+			m.openPrompt(promptAddFolder, "", "folder name")
+			return m, textinput.Blink
+		case "v":
+			_, ok := m.selectedSessionRow()
+			if !ok {
+				m.errMsg = "select a session to preview"
+				return m, nil
+			}
+			m.detailMode = detailPreview
+			return m, tea.Batch(m.startPreview(), previewTickCmd())
+		case "e":
+			folder, ok := m.selectedFolder()
+			if !ok {
+				m.errMsg = "select a folder or session"
+				return m, nil
+			}
+			cmd := m.resolveEditorCommand(folder)
+			if cmd == "" {
+				m.errMsg = "no editor configured; set editor_command in config or $EDITOR"
+				return m, nil
+			}
+			dir := folder.Path
+			if row, ok := m.selectedSessionRow(); ok && row.currentPath != "" {
+				dir = row.currentPath
+			}
+			return m, m.openEditorInDir(cmd, dir)
+		case "enter":
+			row, ok := m.selectedSessionRow()
+			if !ok {
+				m.errMsg = "select a running session"
+				return m, nil
+			}
+			m.statusMsg = "attached to " + row.sessionName + " (detach with Ctrl-b d)"
+			m.errMsg = ""
+			return m, tea.ExecProcess(m.client.AttachCommand(row.sessionName), func(err error) tea.Msg {
+				return attachedMsg{err: err}
+			})
+		}
 	}
 
 	return m, nil
@@ -1868,6 +1874,9 @@ func (m Model) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) openPrompt(mode promptMode, initial, placeholder string) {
+	if mode != promptRunCommand {
+		m.promptTarget = ""
+	}
 	m.promptMode = mode
 	m.prompt.SetValue(initial)
 	m.prompt.Placeholder = placeholder
@@ -1886,6 +1895,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.prompt.Blur()
 			m.promptMode = promptNone
+			m.promptTarget = ""
 			m.statusMsg = ""
 			return m, nil
 		case "tab":
@@ -1899,6 +1909,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			closePrompt := func() {
 				m.prompt.Blur()
 				m.promptMode = promptNone
+				m.promptTarget = ""
 			}
 
 			switch mode {
@@ -1928,8 +1939,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 				closePrompt()
 				return m, m.renameSessionCmd(row.sessionName, folder.Namespace+"/"+sanitizeLeaf(value))
 			case promptRunCommand:
-				row, ok := m.selectedSessionRow()
-				if !ok {
+				if m.promptTarget == "" {
 					m.errMsg = "select a session"
 					return m, nil
 				}
@@ -1937,8 +1947,13 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "command cannot be empty"
 					return m, nil
 				}
+				if !m.sessionExists(m.promptTarget) {
+					m.errMsg = "selected session is no longer running"
+					return m, nil
+				}
+				target := m.promptTarget
 				closePrompt()
-				return m, m.sendCommandCmd(row.sessionName, value)
+				return m, m.sendCommandCmd(target, value)
 			case promptAddFolder:
 				switch m.promptStep {
 				case 0:
