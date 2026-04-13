@@ -668,9 +668,21 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	left := m.styles.headerTitle.Render("grove")
-	right := m.styles.headerMeta.Render(fmt.Sprintf("%d folders", len(m.cfg.Folders)))
+	rightText := fmt.Sprintf("%d folders", len(m.cfg.Folders))
+	if m.filterQuery != "" {
+		rightText += " · filter: " + m.filterQuery
+	}
+	right := m.styles.headerMeta.Render(rightText)
 	if m.width <= 0 {
 		return left + "  " + right
+	}
+	maxRight := m.width - lipgloss.Width(left) - 1
+	if maxRight < 1 {
+		maxRight = 1
+	}
+	if lipgloss.Width(rightText) > maxRight {
+		rightText = truncateRight(rightText, maxRight)
+		right = m.styles.headerMeta.Render(rightText)
 	}
 	padding := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if padding < 1 {
@@ -836,7 +848,8 @@ func (m *Model) rebuildRows() {
 		}
 	}
 
-	m.rows = buildTreeRows(m.cfg, m.sessions, sessionByName)
+	rows := buildTreeRows(m.cfg, m.sessions, sessionByName)
+	m.rows = filterTreeRows(rows, m.cfg, m.filterQuery)
 	if hadSelection {
 		if nextSelected, ok := findMatchingRowIndex(m.rows, selectedRow); ok {
 			m.selected = nextSelected
@@ -849,6 +862,65 @@ func (m *Model) rebuildRows() {
 		m.selected = 0
 	}
 	m.detailScroll = 0
+}
+
+func filterTreeRows(rows []treeRow, cfg config.Config, query string) []treeRow {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return rows
+	}
+
+	filtered := make([]treeRow, 0, len(rows))
+	for i := 0; i < len(rows); {
+		folderRow := rows[i]
+		if folderRow.typeOf != rowFolder {
+			i++
+			continue
+		}
+
+		j := i + 1
+		for j < len(rows) && rows[j].typeOf != rowFolder {
+			j++
+		}
+
+		children := rows[i+1 : j]
+		if treeRowMatchesFilter(folderRow, cfg, query) {
+			filtered = append(filtered, folderRow)
+			filtered = append(filtered, children...)
+			i = j
+			continue
+		}
+
+		matchedChildren := make([]treeRow, 0, len(children))
+		for _, child := range children {
+			if treeRowMatchesFilter(child, cfg, query) {
+				matchedChildren = append(matchedChildren, child)
+			}
+		}
+		if len(matchedChildren) > 0 {
+			filtered = append(filtered, folderRow)
+			filtered = append(filtered, matchedChildren...)
+		}
+
+		i = j
+	}
+
+	return filtered
+}
+
+func treeRowMatchesFilter(row treeRow, cfg config.Config, query string) bool {
+	parts := []string{row.displayName, row.sessionName, row.commandText}
+	if row.typeOf == rowFolder && row.folderIndex >= 0 && row.folderIndex < len(cfg.Folders) {
+		folder := cfg.Folders[row.folderIndex]
+		parts = append(parts, folder.Namespace, folder.Path)
+	}
+
+	for _, part := range parts {
+		if strings.Contains(strings.ToLower(part), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func isInstanceRowType(typeOf rowType) bool {

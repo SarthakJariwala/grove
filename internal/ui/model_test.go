@@ -300,6 +300,21 @@ func TestRenderHeaderShowsFolderCountOnly(t *testing.T) {
 	}
 }
 
+func TestRenderHeaderShowsActiveFilter(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API"}, {Name: "Web"}}}, "config.toml", fakeSessionManager{})
+	m.filterQuery = "beta"
+	got := m.renderHeader()
+
+	if !strings.Contains(got, "2 folders") {
+		t.Fatalf("header = %q, want folder count", got)
+	}
+	if !strings.Contains(got, "filter: beta") {
+		t.Fatalf("header = %q, want active filter", got)
+	}
+}
+
 func TestTreeLineTextFolderOmitsIdleZeroCount(t *testing.T) {
 	t.Parallel()
 
@@ -555,6 +570,36 @@ func TestRebuildRowsPreservesSelectedSessionByIdentity(t *testing.T) {
 	row, ok := m.selectedSessionRow()
 	if !ok || row.sessionName != "api/term-1" {
 		t.Fatalf("selectedSessionRow() after rebuild = (%#v, %v), want api/term-1", row, ok)
+	}
+}
+
+func TestRebuildRowsAppliesFilterQueryToSessions(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{
+		{Name: "API", Path: "/tmp/api", Namespace: "api"},
+		{Name: "Web", Path: "/tmp/web", Namespace: "web"},
+	}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/alpha", Windows: 1},
+			{Name: "api/beta", Windows: 1},
+		},
+		1: {{Name: "web/gamma", Windows: 1}},
+	}
+	m.filterQuery = "beta"
+
+	m.rebuildRows()
+
+	if len(m.rows) != 2 {
+		t.Fatalf("len(rows) = %d, want 2 (matching folder + matching session)", len(m.rows))
+	}
+	if m.rows[0].typeOf != rowFolder || m.rows[0].folderIndex != 0 {
+		t.Fatalf("rows[0] = %#v, want API folder row", m.rows[0])
+	}
+	if m.rows[1].typeOf != rowTerminalInstance || m.rows[1].sessionName != "api/beta" {
+		t.Fatalf("rows[1] = %#v, want matching beta session row", m.rows[1])
 	}
 }
 
