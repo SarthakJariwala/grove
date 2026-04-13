@@ -993,6 +993,15 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		} else {
 			rows = append(rows, m.treeLineStyled(row, plain, maxWidth))
 		}
+
+		if treeRowNeedsBreathingRoom(m.rows, i) {
+			visualLines++
+			if visualLines > effectiveBodyH {
+				actualEnd = i + 1
+				break
+			}
+			rows = append(rows, "")
+		}
 	}
 
 	body := strings.Join(rows, "\n")
@@ -1007,6 +1016,8 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 	return m.styledPane(padded, paneWidth, innerH, dim)
 }
 
+const treeChildIndent = "    "
+
 func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
@@ -1017,11 +1028,11 @@ func (m Model) treeLineText(row treeRow, maxWidth int) string {
 		}
 		return treeJustify(left, right, maxWidth)
 	case rowAgentInstance:
-		return treeJustify("  ◆ "+row.displayName, "active", maxWidth)
+		return treeJustify(treeChildIndent+"◆ "+row.displayName, "active", maxWidth)
 	case rowTerminalInstance:
-		return treeJustify("  ○ "+row.displayName, "", maxWidth)
+		return treeJustify(treeChildIndent+"○ "+row.displayName, "", maxWidth)
 	case rowCommand:
-		return treeJustify("  ▸ "+row.displayName, "", maxWidth)
+		return treeJustify(treeChildIndent+"▸ "+row.displayName, "", maxWidth)
 	default:
 		return ""
 	}
@@ -1072,35 +1083,32 @@ func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 			gap = 1
 		}
 		line := left + strings.Repeat(" ", gap) + count
-		if selected, ok := m.selectedRow(); ok && selected.typeOf == rowFolder && selected.folderIndex == row.folderIndex {
-			return m.styles.rowSelectedBg.Width(maxWidth).Render(padRight(line, maxWidth))
-		}
 		return line
 	case rowAgentInstance:
-		left := "  " + m.styles.childIconActive.Render("◆") + " " + m.styles.rowSession.Render(row.displayName)
+		name := m.styles.rowSession.Render(row.displayName)
+		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
+			name = m.styles.rowSelectedText.Render(row.displayName)
+		}
+		left := treeChildIndent + m.styles.childIconActive.Render("◆") + " " + name
 		right := m.styles.badgeActive.Render("active")
-		leftPlain := "  ◆ " + row.displayName
+		leftPlain := treeChildIndent + "◆ " + row.displayName
 		gap := maxWidth - lipgloss.Width(leftPlain) - lipgloss.Width("active")
 		if gap < 1 {
 			gap = 1
 		}
-		line := left + strings.Repeat(" ", gap) + right
-		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
-			return m.styles.rowSelectedBg.Width(maxWidth).Render(padRight(line, maxWidth))
-		}
-		return line
+		return left + strings.Repeat(" ", gap) + right
 	case rowTerminalInstance:
-		line := "  " + m.styles.childIconDim.Render("○") + " " + m.styles.rowSession.Render(row.displayName)
+		name := m.styles.rowSession.Render(row.displayName)
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
-			return m.styles.rowSelectedBg.Width(maxWidth).Render(padRight(line, maxWidth))
+			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		return line
+		return treeChildIndent + m.styles.childIconDim.Render("○") + " " + name
 	case rowCommand:
-		line := "  " + m.styles.childIconDim.Render("▸") + " " + m.styles.rowSession.Render(row.displayName)
+		name := m.styles.rowSession.Render(row.displayName)
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
-			return m.styles.rowSelectedBg.Width(maxWidth).Render(padRight(line, maxWidth))
+			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		return line
+		return treeChildIndent + m.styles.childIconDim.Render("▸") + " " + name
 	default:
 		return plain
 	}
@@ -2051,7 +2059,20 @@ func (m Model) contentHeight() int {
 }
 
 func treeRowVisualWeight(rows []treeRow, i int, isFirstVisible bool) int {
+	if treeRowNeedsBreathingRoom(rows, i) {
+		return 2
+	}
 	return 1
+}
+
+func treeRowNeedsBreathingRoom(rows []treeRow, i int) bool {
+	if i < 0 || i >= len(rows)-1 {
+		return false
+	}
+	if rows[i].typeOf == rowFolder {
+		return false
+	}
+	return rows[i+1].typeOf == rowFolder
 }
 
 // treeDataRowBudget computes how many data rows fit in maxVisual lines

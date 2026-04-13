@@ -318,6 +318,36 @@ func TestTreeLineTextFolderOmitsIdleZeroCount(t *testing.T) {
 	}
 }
 
+func TestTreeLineTextChildrenUseDeeperIndent(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "dev", Command: "make dev"}},
+	}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/agent-pi-1", Windows: 1, CurrentCommand: "pi"},
+			{Name: "api/term-1", Windows: 1},
+		},
+	}
+	m.rebuildRows()
+
+	for idx, want := range map[int]string{
+		1: "    ◆ Pi #1",
+		2: "    ○ Terminal #1",
+		3: "    ▸ dev",
+	} {
+		got := m.treeLineText(m.rows[idx], 40)
+		if !strings.HasPrefix(got, want) {
+			t.Fatalf("treeLineText(row %d) = %q, want prefix %q", idx, got, want)
+		}
+	}
+}
+
 func TestRenderTreePaneShowsDirectChildrenWithoutSectionHeadings(t *testing.T) {
 	t.Parallel()
 
@@ -350,6 +380,32 @@ func TestRenderTreePaneShowsDirectChildrenWithoutSectionHeadings(t *testing.T) {
 	}
 }
 
+func TestRenderTreePaneAddsBreathingRoomAfterExpandedFolderOnly(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{
+		{Name: "API", Path: "/tmp/api", Namespace: "api", Commands: []config.Command{{Name: "dev", Command: "make dev"}}},
+		{Name: "Web", Path: "/tmp/web", Namespace: "web"},
+		{Name: "Docs", Path: "/tmp/docs", Namespace: "docs"},
+	}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{Name: "api/term-1", Windows: 1}},
+	}
+	m.rebuildRows()
+
+	got := m.renderTreePane(8, 40, 44, false)
+	if !strings.Contains(got, "○ Terminal #1") || !strings.Contains(got, "● Web") {
+		t.Fatalf("tree view = %q, expected expanded then collapsed folders", got)
+	}
+	if !strings.Contains(got, "│     ▸ dev                                │\n│                                          │\n│ ▸ ● Web") {
+		t.Fatalf("tree view = %q, want one blank line between expanded folder content and next folder", got)
+	}
+	if strings.Contains(got, "▸ ● Web                               │\n│                                          │\n│ ▸ ● Docs") {
+		t.Fatalf("tree view = %q, should not add blank line between collapsed folders", got)
+	}
+}
+
 func TestTreeLineStyledFolderStatusPriorityPrefersAttention(t *testing.T) {
 	t.Parallel()
 
@@ -369,19 +425,20 @@ func TestTreeLineStyledFolderStatusPriorityPrefersAttention(t *testing.T) {
 	}
 }
 
-func TestRenderTreePaneSelectedRowUsesBackgroundHighlight(t *testing.T) {
+func TestTreeLineStyledSelectedRowUsesTextEmphasisOnly(t *testing.T) {
 	t.Parallel()
 
 	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/term-1", Windows: 1}}}
 	m.rebuildRows()
-	m.setSelected(0)
+	m.setSelected(1)
 
-	got := m.treeLineStyled(m.rows[0], m.treeLineText(m.rows[0], 40), 40)
-	if lipgloss.Width(got) != 40 {
-		t.Fatalf("selected tree line width = %d, want 40", lipgloss.Width(got))
+	got := m.treeLineStyled(m.rows[1], m.treeLineText(m.rows[1], 40), 40)
+	if lipgloss.Width(got) >= 40 {
+		t.Fatalf("selected tree line width = %d, want less than 40 without full-row highlight", lipgloss.Width(got))
 	}
-	if !colorsEqual(m.styles.rowSelectedBg.GetBackground(), lipgloss.Color(colorTreeHighlight)) {
-		t.Fatalf("selected row background = %#v, want %s", m.styles.rowSelectedBg.GetBackground(), colorTreeHighlight)
+	if !colorsEqual(m.styles.rowSelectedText.GetForeground(), lipgloss.Color(colorTreeAccent)) {
+		t.Fatalf("selected row text color = %#v, want %s", m.styles.rowSelectedText.GetForeground(), colorTreeAccent)
 	}
 }
 
