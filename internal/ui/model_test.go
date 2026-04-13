@@ -22,6 +22,12 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func colorsEqual(a, b lipgloss.TerminalColor) bool {
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return ar == br && ag == bg && ab == bb && aa == ba
+}
+
 type fakeSessionManager struct {
 	listSessionsFn func() ([]tmux.Session, error)
 	listPanesFn    func() ([]tmux.PaneInfo, error)
@@ -180,7 +186,7 @@ func TestPaneDisplayTitle(t *testing.T) {
 	}
 }
 
-func TestRenderTreePaneShowsOnlyAlertIndicators(t *testing.T) {
+func TestRenderTreePaneOmitsSessionRuntimeMetadata(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}
@@ -199,14 +205,15 @@ func TestRenderTreePaneShowsOnlyAlertIndicators(t *testing.T) {
 
 	got := m.renderTreePane(8, 60, 64, false)
 
-	if !strings.Contains(got, "#") {
-		t.Fatalf("tree view = %q, want activity indicator", got)
+	for _, want := range []string{"● API", "○ one"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("tree view = %q, want %q", got, want)
+		}
 	}
-	if strings.Contains(got, "Claude Code") {
-		t.Fatalf("tree view = %q, should not include pane title", got)
-	}
-	if strings.Contains(got, "nvim") {
-		t.Fatalf("tree view = %q, should not include current command", got)
+	for _, hidden := range []string{"Claude Code", "nvim", "#"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("tree view = %q, should not include %q", got, hidden)
+		}
 	}
 }
 
@@ -276,64 +283,162 @@ func TestRenderDetailPaneFolderSummarizesSections(t *testing.T) {
 	}
 }
 
-func TestRenderDetailPaneSectionAndCommandRowsAreTypeAware(t *testing.T) {
+func TestRenderHeaderShowsFolderCountOnly(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.Config{Folders: []config.Folder{{
-		Name:      "API",
-		Path:      "/tmp/api",
-		Namespace: "api",
-		Commands:  []config.Command{{Name: "start", Command: "make start"}},
-	}}}
-	m := NewModel(cfg, "config.toml", fakeSessionManager{})
-	m.rebuildRows()
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API"}, {Name: "Web"}}}, "config.toml", fakeSessionManager{})
+	got := m.renderHeader()
 
-	// rows: [0]=folder, [1]=Commands section, [2]=start command
-	m.setSelected(1)
-	sectionDetail := m.renderDetailPane(20, 80, 84, false)
-	for _, want := range []string{"Commands", "configured", "Command lifecycle controls appear here"} {
-		if !strings.Contains(sectionDetail, want) {
-			t.Fatalf("section detail = %q, want %q", sectionDetail, want)
-		}
+	if !strings.Contains(got, "2 folders") {
+		t.Fatalf("header = %q, want folder count", got)
 	}
-
-	m.setSelected(2)
-	commandDetail := m.renderDetailPane(20, 80, 84, false)
-	for _, want := range []string{"start", "stopped", "make start"} {
-		if !strings.Contains(commandDetail, want) {
-			t.Fatalf("command detail = %q, want %q", commandDetail, want)
-		}
+	if strings.Contains(got, "sessions") {
+		t.Fatalf("header = %q, should not include session count", got)
 	}
-	if strings.Contains(commandDetail, "shell idle") {
-		t.Fatalf("command detail = %q, should not render session runtime fields for stopped commands", commandDetail)
+	if strings.Contains(got, "▸ grove") {
+		t.Fatalf("header = %q, should not include old title prefix", got)
 	}
 }
 
-func TestRenderTreePaneShowsSectionHeadings(t *testing.T) {
+func TestTreeLineTextFolderOmitsIdleZeroCount(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.rebuildRows()
+
+	got := m.treeLineText(m.rows[0], 40)
+	if strings.Contains(got, "0") {
+		t.Fatalf("treeLineText(folder) = %q, should omit idle zero count", got)
+	}
+	if !strings.Contains(got, "▸") {
+		t.Fatalf("treeLineText(folder) = %q, want collapsed caret", got)
+	}
+	if !strings.Contains(got, "●") {
+		t.Fatalf("treeLineText(folder) = %q, want status dot", got)
+	}
+}
+
+func TestTreeLineTextChildrenUseDeeperIndent(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Folders: []config.Folder{{
 		Name:      "API",
 		Path:      "/tmp/api",
 		Namespace: "api",
-		Commands:  []config.Command{{Name: "start", Command: "make start"}},
+		Commands:  []config.Command{{Name: "dev", Command: "make dev"}},
 	}}}
-
 	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/agent-pi-1", Windows: 1, CurrentCommand: "pi"},
+			{Name: "api/term-1", Windows: 1},
+		},
+	}
 	m.rebuildRows()
-	got := m.renderTreePane(12, 60, 64, false)
 
-	// Only Commands section should appear (Agents/Terminals are empty and collapsed)
-	for _, heading := range []string{"Commands", "start", "■"} {
-		if !strings.Contains(got, heading) {
-			t.Fatalf("tree view = %q, want %q", got, heading)
+	for idx, want := range map[int]string{
+		1: "    ◆ Pi #1",
+		2: "    ○ Terminal #1",
+		3: "    ▸ dev",
+	} {
+		got := m.treeLineText(m.rows[idx], 40)
+		if !strings.HasPrefix(got, want) {
+			t.Fatalf("treeLineText(row %d) = %q, want prefix %q", idx, got, want)
 		}
 	}
-	// Verify empty sections are hidden
-	for _, hidden := range []string{"Agents", "Terminals"} {
-		if strings.Contains(got, hidden) {
-			t.Fatalf("tree view = %q, should not contain empty section %q", got, hidden)
+}
+
+func TestRenderTreePaneShowsDirectChildrenWithoutSectionHeadings(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "dev", Command: "make dev"}},
+	}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/agent-pi-1", Windows: 1, CurrentCommand: "pi"},
+			{Name: "api/term-1", Windows: 1},
+		},
+	}
+	m.rebuildRows()
+
+	got := m.renderTreePane(8, 40, 44, false)
+
+	for _, want := range []string{"◆ Pi #1", "active", "○ Terminal #1", "▸ dev"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("tree view = %q, want %q", got, want)
 		}
+	}
+	for _, hidden := range []string{"Agents", "Terminals", "Commands"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("tree view = %q, should not contain %q", got, hidden)
+		}
+	}
+}
+
+func TestRenderTreePaneAddsBreathingRoomAfterExpandedFolderOnly(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{
+		{Name: "API", Path: "/tmp/api", Namespace: "api", Commands: []config.Command{{Name: "dev", Command: "make dev"}}},
+		{Name: "Web", Path: "/tmp/web", Namespace: "web"},
+		{Name: "Docs", Path: "/tmp/docs", Namespace: "docs"},
+	}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {{Name: "api/term-1", Windows: 1}},
+	}
+	m.rebuildRows()
+
+	got := m.renderTreePane(8, 40, 44, false)
+	if !strings.Contains(got, "○ Terminal #1") || !strings.Contains(got, "● Web") {
+		t.Fatalf("tree view = %q, expected expanded then collapsed folders", got)
+	}
+	if !strings.Contains(got, "│     ▸ dev                                │\n│                                          │\n│ ▸ ● Web") {
+		t.Fatalf("tree view = %q, want one blank line between expanded folder content and next folder", got)
+	}
+	if strings.Contains(got, "▸ ● Web                               │\n│                                          │\n│ ▸ ● Docs") {
+		t.Fatalf("tree view = %q, should not add blank line between collapsed folders", got)
+	}
+}
+
+func TestTreeLineStyledFolderStatusPriorityPrefersAttention(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{
+		Name:           "api/term-1",
+		Windows:        1,
+		AlertsActivity: true,
+	}}}
+	m.rebuildRows()
+
+	if got := m.folderStatus(0); got != folderStatusAttention {
+		t.Fatalf("folderStatus(0) = %v, want %v", got, folderStatusAttention)
+	}
+	if !colorsEqual(m.styles.folderDotAttention.GetForeground(), lipgloss.Color(colorTreeAttention)) {
+		t.Fatalf("folder attention color = %#v, want %s", m.styles.folderDotAttention.GetForeground(), colorTreeAttention)
+	}
+}
+
+func TestTreeLineStyledSelectedRowUsesTextEmphasisOnly(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/term-1", Windows: 1}}}
+	m.rebuildRows()
+	m.setSelected(1)
+
+	got := m.treeLineStyled(m.rows[1], m.treeLineText(m.rows[1], 40), 40)
+	if lipgloss.Width(got) >= 40 {
+		t.Fatalf("selected tree line width = %d, want less than 40 without full-row highlight", lipgloss.Width(got))
+	}
+	if !colorsEqual(m.styles.rowSelectedText.GetForeground(), lipgloss.Color(colorTreeAccent)) {
+		t.Fatalf("selected row text color = %#v, want %s", m.styles.rowSelectedText.GetForeground(), colorTreeAccent)
 	}
 }
 
@@ -389,9 +494,8 @@ func TestSelectedHelpersAreRowTypeAware(t *testing.T) {
 	}
 	m.rebuildRows()
 
-	// New row layout (empty sections collapsed):
-	// [0]=folder, [1]=Terminals, [2]=term-1, [3]=Commands, [4]=cmd-start, [5]=cmd-worker
-	for _, selected := range []int{1, 2, 3, 4, 5} {
+	// rows: [0]=folder, [1]=term-1, [2]=cmd-start, [3]=cmd-worker
+	for _, selected := range []int{0, 1, 2, 3} {
 		m.setSelected(selected)
 		folder, ok := m.selectedFolder()
 		if !ok || folder.Namespace != "api" {
@@ -399,13 +503,13 @@ func TestSelectedHelpersAreRowTypeAware(t *testing.T) {
 		}
 	}
 
-	m.setSelected(4)
+	m.setSelected(2)
 	runningCommand, ok := m.selectedSessionRow()
 	if !ok || runningCommand.typeOf != rowCommand || runningCommand.sessionName != "api/cmd-start" {
 		t.Fatalf("selectedSessionRow() running command = (%#v, %v), want running command row", runningCommand, ok)
 	}
 
-	m.setSelected(5)
+	m.setSelected(3)
 	if row, ok := m.selectedSessionRow(); ok {
 		t.Fatalf("selectedSessionRow() on stopped command = (%#v, %v), want false", row, ok)
 	}

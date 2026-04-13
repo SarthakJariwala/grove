@@ -92,20 +92,27 @@ const (
 // Semantic:  amber for detached, red for errors/danger only
 
 const (
-	colorPrimary    = "#5eead4" // bright mint green — title, selection accent, attached
-	colorPrimaryDim = "#2dd4a8" // medium green — folder headers
-	colorText       = "#d1d9e0" // warm light gray — primary text
-	colorTextDim    = "#768390" // medium gray — labels, help text, metadata
-	colorTextMuted  = "#444c56" // dim gray — section labels, dividers
-	colorTextFaint  = "#3b444d" // dim — pane borders, separators (visible on Nord etc.)
-	colorBg         = "#0d1117" // true dark bg
-	colorBgSubtle   = "#161b22" // main bg
-	colorBgElevated = "#1a3a35" // selection row bg — dark forest green tint
-	colorBgChip     = "#21262d" // chip/badge backgrounds
-	colorAmber      = "#e3b341" // warmer amber — detached, warnings
-	colorRed        = "#f85149" // red — errors, kill confirmation
-	colorBlue       = "#58a6ff" // blue — window counts
-	colorWhite      = "#ecf2f8" // bright white — emphasized names
+	colorPrimary    = "#5eead4"
+	colorPrimaryDim = "#2dd4a8"
+	colorText       = "#d1d9e0"
+	colorTextDim    = "#768390"
+	colorTextMuted  = "#444c56"
+	colorTextFaint  = "#3b444d"
+	colorBg         = "#0d1117"
+	colorBgSubtle   = "#161b22"
+	colorBgElevated = "#1a3a35"
+	colorBgChip     = "#21262d"
+	colorAmber      = "#e3b341"
+	colorRed        = "#f85149"
+	colorBlue       = "#58a6ff"
+	colorWhite      = "#ecf2f8"
+
+	colorTreeActive    = "#a6e3a1"
+	colorTreeAttention = "#f9e2af"
+	colorTreeDim       = "#6c7086"
+	colorTreeDark      = "#45475a"
+	colorTreeAccent    = "#89b4fa"
+	colorTreeHighlight = "#1e3a5f"
 )
 
 type Model struct {
@@ -164,14 +171,22 @@ type styleSet struct {
 	divider   lipgloss.Style
 
 	// Tree rows
-	rowFolder       lipgloss.Style
-	rowFolderCount  lipgloss.Style // muted session count
-	rowSession      lipgloss.Style
-	rowSelected     lipgloss.Style
-	rowSelectedText lipgloss.Style
-	selAccent       lipgloss.Style // left accent bar for selection
-	rowKillTarget   lipgloss.Style // red highlight for kill confirmation
-	rowDim          lipgloss.Style // dimmed row when prompt is active
+	rowFolder          lipgloss.Style
+	rowFolderIdle      lipgloss.Style
+	rowFolderCount     lipgloss.Style // muted session count
+	rowSession         lipgloss.Style
+	rowSelected        lipgloss.Style
+	rowSelectedText    lipgloss.Style
+	rowSelectedBg      lipgloss.Style
+	selAccent          lipgloss.Style // left accent bar for selection
+	rowKillTarget      lipgloss.Style // red highlight for kill confirmation
+	rowDim             lipgloss.Style // dimmed row when prompt is active
+	folderDotActive    lipgloss.Style
+	folderDotAttention lipgloss.Style
+	folderDotIdle      lipgloss.Style
+	childIconActive    lipgloss.Style
+	childIconDim       lipgloss.Style
+	badgeActive        lipgloss.Style
 
 	// Status indicators
 	statusDotAttached lipgloss.Style
@@ -223,14 +238,22 @@ func defaultStyles() styleSet {
 		divider:   lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextFaint)),
 
 		// Tree rows
-		rowFolder:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
-		rowFolderCount:  lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)),
-		rowSession:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
-		rowSelected:     lipgloss.NewStyle(),
-		rowSelectedText: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)).Bold(true),
-		selAccent:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
-		rowKillTarget:   lipgloss.NewStyle().Background(lipgloss.Color("#3d1214")),
-		rowDim:          lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Faint(true),
+		rowFolder:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorWhite)),
+		rowFolderIdle:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeDim)),
+		rowFolderCount:     lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeDim)),
+		rowSession:         lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)),
+		rowSelected:        lipgloss.NewStyle().Background(lipgloss.Color(colorTreeHighlight)),
+		rowSelectedText:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeAccent)).Bold(true),
+		rowSelectedBg:      lipgloss.NewStyle().Background(lipgloss.Color(colorTreeHighlight)),
+		selAccent:          lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
+		rowKillTarget:      lipgloss.NewStyle().Background(lipgloss.Color("#3d1214")),
+		rowDim:             lipgloss.NewStyle().Foreground(lipgloss.Color(colorTextDim)).Faint(true),
+		folderDotActive:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeActive)),
+		folderDotAttention: lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeAttention)),
+		folderDotIdle:      lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeDark)),
+		childIconActive:    lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeActive)),
+		childIconDim:       lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeDim)),
+		badgeActive:        lipgloss.NewStyle().Foreground(lipgloss.Color(colorTreeActive)).Bold(true),
 
 		// Status indicators
 		statusDotAttached: lipgloss.NewStyle().Foreground(lipgloss.Color(colorPrimary)),
@@ -390,18 +413,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.newTerminalCmd(m.rows[m.selected].folderIndex, folder)
 		case "a":
-			if len(m.rows) == 0 || m.selected < 0 || m.selected >= len(m.rows) {
-				m.errMsg = "select a folder or the Agents section"
-				return m, nil
-			}
-			row := m.rows[m.selected]
-			if row.typeOf != rowFolder && !(row.typeOf == rowSection && row.section == sectionAgents) {
-				m.errMsg = "select a folder or the Agents section"
+			row, ok := m.selectedRow()
+			if !ok || row.typeOf != rowFolder {
+				m.errMsg = "select a folder"
 				return m, nil
 			}
 			folder, ok := m.selectedFolder()
 			if !ok {
-				m.errMsg = "select a folder or the Agents section"
+				m.errMsg = "select a folder"
 				return m, nil
 			}
 			m.openAgentPicker(folder)
@@ -648,19 +667,16 @@ func (m Model) View() string {
 }
 
 func (m Model) renderHeader() string {
-	title := m.styles.headerTitle.Render("▸ grove")
-	sep := m.styles.headerSep.Render("  ·  ")
-
-	metaParts := []string{
-		fmt.Sprintf("%d folders", len(m.cfg.Folders)),
-		fmt.Sprintf("%d sessions", m.totalManagedSessions()),
+	left := m.styles.headerTitle.Render("grove")
+	right := m.styles.headerMeta.Render(fmt.Sprintf("%d folders", len(m.cfg.Folders)))
+	if m.width <= 0 {
+		return left + "  " + right
 	}
-	if m.filterQuery != "" {
-		metaParts = append(metaParts, "filter: "+m.filterQuery)
+	padding := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if padding < 1 {
+		padding = 1
 	}
-	meta := m.styles.headerMeta.Render(strings.Join(metaParts, m.styles.headerSep.Render(" · ")))
-
-	return title + sep + meta
+	return left + strings.Repeat(" ", padding) + right
 }
 
 // ── Footer (merged help bar + status) ───────────────────────────────
@@ -874,9 +890,7 @@ func findMatchingRowIndex(rows []treeRow, selected treeRow) (int, bool) {
 				return i, true
 			}
 		case rowSection:
-			if row.typeOf == rowSection && row.folderIndex == selected.folderIndex && row.section == selected.section {
-				return i, true
-			}
+			continue
 		default:
 			if row.sessionName != "" && row.sessionName == selected.sessionName {
 				return i, true
@@ -884,6 +898,40 @@ func findMatchingRowIndex(rows []treeRow, selected treeRow) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+type folderVisualStatus int
+
+const (
+	folderStatusIdle folderVisualStatus = iota
+	folderStatusActive
+	folderStatusAttention
+)
+
+func (m Model) folderSessionCount(folderIndex int) int {
+	return len(m.sessions[folderIndex])
+}
+
+func (m Model) folderStatus(folderIndex int) folderVisualStatus {
+	sessions := m.sessions[folderIndex]
+	if len(sessions) == 0 {
+		return folderStatusIdle
+	}
+	for _, session := range sessions {
+		if session.HasAlerts || session.AlertsBell || session.AlertsActivity || session.AlertsSilence {
+			return folderStatusAttention
+		}
+	}
+	return folderStatusActive
+}
+
+func (m Model) folderCaret(folderIndex int) string {
+	for _, row := range m.rows {
+		if row.typeOf != rowFolder && row.folderIndex == folderIndex {
+			return "▾"
+		}
+	}
+	return "▸"
 }
 
 func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string {
@@ -925,73 +973,11 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		start, end = windowAround(m.selected, len(m.rows), dataRowBudget)
 	}
 
-	sepLine := m.styles.divider.Render(strings.Repeat("─", maxWidth))
-
 	visualLines := 0
 	actualEnd := end
 	for i := start; i < end; i++ {
 		row := m.rows[i]
-		isSelected := i == m.selected
 		isKillTarget := m.confirmKillTarget != "" && row.sessionName == m.confirmKillTarget
-
-		if row.typeOf == rowFolder {
-			// Two blank lines before folder (except first visible)
-			if len(rows) > 0 {
-				for blankN := 0; blankN < 2; blankN++ {
-					visualLines++
-					if visualLines > effectiveBodyH {
-						actualEnd = i
-						break
-					}
-					rows = append(rows, "")
-				}
-				if visualLines > effectiveBodyH {
-					actualEnd = i
-					break
-				}
-			}
-
-			// Folder row
-			visualLines++
-			if visualLines > effectiveBodyH {
-				actualEnd = i
-				break
-			}
-
-			plain := m.treeLineText(row, maxWidth)
-			if dim {
-				rows = append(rows, m.styles.rowDim.Render(plain))
-			} else if isSelected {
-				rows = append(rows, m.selectedLine(plain, maxWidth))
-			} else {
-				rows = append(rows, m.treeLineStyled(row, plain, maxWidth))
-			}
-
-			// Separator line after folder header
-			visualLines++
-			if visualLines > effectiveBodyH {
-				actualEnd = i + 1
-				break
-			}
-			if dim {
-				rows = append(rows, m.styles.rowDim.Render(strings.Repeat("─", maxWidth)))
-			} else {
-				rows = append(rows, sepLine)
-			}
-			continue
-		}
-
-		if row.typeOf == rowSection {
-			// One blank line before section labels, but not the first section after a folder
-			if i > 0 && m.rows[i-1].typeOf != rowFolder {
-				visualLines++
-				if visualLines > effectiveBodyH {
-					actualEnd = i
-					break
-				}
-				rows = append(rows, "")
-			}
-		}
 
 		visualLines++
 		if visualLines > effectiveBodyH {
@@ -1002,12 +988,19 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 		plain := m.treeLineText(row, maxWidth)
 		if dim {
 			rows = append(rows, m.styles.rowDim.Render(plain))
-		} else if isSelected {
-			rows = append(rows, m.selectedLine(plain, maxWidth))
 		} else if isKillTarget {
 			rows = append(rows, m.styles.rowKillTarget.Render(padRight(plain, maxWidth)))
 		} else {
 			rows = append(rows, m.treeLineStyled(row, plain, maxWidth))
+		}
+
+		if treeRowNeedsBreathingRoom(m.rows, i) {
+			visualLines++
+			if visualLines > effectiveBodyH {
+				actualEnd = i + 1
+				break
+			}
+			rows = append(rows, "")
 		}
 	}
 
@@ -1023,47 +1016,25 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 	return m.styledPane(padded, paneWidth, innerH, dim)
 }
 
-func sectionIcon(s sectionKind) string {
-	switch s {
-	case sectionAgents:
-		return "✦"
-	case sectionTerminals:
-		return "⊞"
-	case sectionCommands:
-		return "≡"
-	default:
-		return "·"
-	}
-}
+const treeChildIndent = "    "
 
 func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
-		count := len(m.sessions[row.folderIndex])
-		name := fmt.Sprintf("▸ %s", row.displayName)
-		countStr := fmt.Sprintf("%d", count)
-		pad := maxWidth - len(name) - len(countStr)
-		if pad < 1 {
-			pad = 1
+		left := fmt.Sprintf("%s ● %s", m.folderCaret(row.folderIndex), row.displayName)
+		right := ""
+		if count := m.folderSessionCount(row.folderIndex); count > 0 {
+			right = fmt.Sprintf("%d", count)
 		}
-		return truncateRight(name+strings.Repeat(" ", pad)+countStr, maxWidth)
-	case rowSection:
-		return truncateRight(sectionIcon(row.section)+" "+row.displayName, maxWidth)
+		return treeJustify(left, right, maxWidth)
+	case rowAgentInstance:
+		return treeJustify(treeChildIndent+"◆ "+row.displayName, "active", maxWidth)
+	case rowTerminalInstance:
+		return treeJustify(treeChildIndent+"○ "+row.displayName, "", maxWidth)
 	case rowCommand:
-		left := fmt.Sprintf("  %s", row.displayName)
-		right := "■"
-		if row.status == "running" {
-			right = "▶"
-		}
-		return treeJustify(left, right, maxWidth)
+		return treeJustify(treeChildIndent+"▸ "+row.displayName, "", maxWidth)
 	default:
-		dot := "○"
-		if row.attached {
-			dot = "●"
-		}
-		left := fmt.Sprintf("  %s %s", dot, row.displayName)
-		right := alertIndicatorStr(row)
-		return treeJustify(left, right, maxWidth)
+		return ""
 	}
 }
 
@@ -1073,9 +1044,9 @@ func treeJustify(left, right string, maxWidth int) string {
 	if right == "" {
 		return truncateRight(left, maxWidth)
 	}
-	gap := maxWidth - len(left) - len(right)
+	gap := maxWidth - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		left = truncateRight(left, maxWidth-len(right)-1)
+		left = truncateRight(left, maxWidth-lipgloss.Width(right)-1)
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
@@ -1084,49 +1055,62 @@ func treeJustify(left, right string, maxWidth int) string {
 func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
-		count := len(m.sessions[row.folderIndex])
-		name := fmt.Sprintf("▸ %s", row.displayName)
-		countStr := fmt.Sprintf("%d", count)
-		pad := maxWidth - len(name) - len(countStr)
-		if pad < 1 {
-			pad = 1
+		count := ""
+		if n := m.folderSessionCount(row.folderIndex); n > 0 {
+			count = m.styles.rowFolderCount.Render(fmt.Sprintf("%d", n))
 		}
-		return m.styles.rowFolder.Render(name) + strings.Repeat(" ", pad) + m.styles.rowFolderCount.Render(countStr)
-	case rowSection:
-		return m.styles.detailSection.Render(plain)
+
+		nameStyle := m.styles.rowFolder
+		if m.folderStatus(row.folderIndex) == folderStatusIdle {
+			nameStyle = m.styles.rowFolderIdle
+		}
+		if selected, ok := m.selectedRow(); ok && selected.typeOf == rowFolder && selected.folderIndex == row.folderIndex {
+			nameStyle = m.styles.rowSelectedText
+		}
+
+		dot := m.styles.folderDotIdle.Render("●")
+		switch m.folderStatus(row.folderIndex) {
+		case folderStatusAttention:
+			dot = m.styles.folderDotAttention.Render("●")
+		case folderStatusActive:
+			dot = m.styles.folderDotActive.Render("●")
+		}
+
+		left := m.styles.detailMeta.Render(m.folderCaret(row.folderIndex)) + " " + dot + " " + nameStyle.Render(row.displayName)
+		leftPlain := fmt.Sprintf("%s ● %s", m.folderCaret(row.folderIndex), row.displayName)
+		gap := maxWidth - lipgloss.Width(leftPlain) - lipgloss.Width(stripANSI(count))
+		if gap < 1 {
+			gap = 1
+		}
+		line := left + strings.Repeat(" ", gap) + count
+		return line
+	case rowAgentInstance:
+		name := m.styles.rowSession.Render(row.displayName)
+		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
+			name = m.styles.rowSelectedText.Render(row.displayName)
+		}
+		left := treeChildIndent + m.styles.childIconActive.Render("◆") + " " + name
+		right := m.styles.badgeActive.Render("active")
+		leftPlain := treeChildIndent + "◆ " + row.displayName
+		gap := maxWidth - lipgloss.Width(leftPlain) - lipgloss.Width("active")
+		if gap < 1 {
+			gap = 1
+		}
+		return left + strings.Repeat(" ", gap) + right
+	case rowTerminalInstance:
+		name := m.styles.rowSession.Render(row.displayName)
+		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
+			name = m.styles.rowSelectedText.Render(row.displayName)
+		}
+		return treeChildIndent + m.styles.childIconDim.Render("○") + " " + name
 	case rowCommand:
-		leftStyled := "  " + m.styles.rowSession.Render(row.displayName)
-		leftPlain := fmt.Sprintf("  %s", row.displayName)
-		var rightStyled, rightPlain string
-		if row.status == "running" {
-			rightStyled = m.styles.statusDotAttached.Render("▶")
-			rightPlain = "▶"
-		} else {
-			rightStyled = m.styles.statusDotDetached.Render("■")
-			rightPlain = "■"
+		name := m.styles.rowSession.Render(row.displayName)
+		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
+			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		gap := maxWidth - len(leftPlain) - len(rightPlain)
-		if gap < 1 {
-			gap = 1
-		}
-		return leftStyled + strings.Repeat(" ", gap) + rightStyled
+		return treeChildIndent + m.styles.childIconDim.Render("▸") + " " + name
 	default:
-		dot := m.styles.statusDotDetached.Render("○")
-		if row.attached {
-			dot = m.styles.statusDotAttached.Render("●")
-		}
-		leftStyled := "  " + dot + " " + m.styles.rowSession.Render(row.displayName)
-		leftPlain := fmt.Sprintf("  %s %s", "○", row.displayName)
-		alertStr := alertIndicatorStr(row)
-		if alertStr == "" {
-			return leftStyled
-		}
-		rightStyled := m.styles.alertIndicator.Render(alertStr)
-		gap := maxWidth - len(leftPlain) - len(alertStr)
-		if gap < 1 {
-			gap = 1
-		}
-		return leftStyled + strings.Repeat(" ", gap) + rightStyled
+		return plain
 	}
 }
 
@@ -1170,8 +1154,6 @@ func (m Model) detailLinesForRow(row treeRow, maxWidth int) []string {
 	switch row.typeOf {
 	case rowFolder:
 		return m.folderDetailLines(row, maxWidth)
-	case rowSection:
-		return m.sectionDetailLines(row, maxWidth)
 	case rowCommand:
 		return m.commandDetailLines(row, maxWidth)
 	case rowAgentInstance, rowTerminalInstance:
@@ -1240,45 +1222,6 @@ func (m Model) folderDetailLines(row treeRow, maxWidth int) []string {
 		}
 	} else if len(sessions) == 0 && commands == 0 {
 		lines = append(lines, "", m.styles.emptyHint.Render("press n to create a terminal"))
-	}
-	return lines
-}
-
-func (m Model) sectionDetailLines(row treeRow, maxWidth int) []string {
-	folder := m.cfg.Folders[row.folderIndex]
-	sessions := m.sessions[row.folderIndex]
-	title := row.displayName
-	meta := ""
-	description := ""
-	action := ""
-
-	switch row.section {
-	case sectionAgents:
-		count := len(buildAgentRows(row.folderIndex, folder, sessions))
-		meta = fmt.Sprintf("%d running", count)
-		description = "Running agent instances for this folder."
-		action = "Press a to add and launch an agent"
-	case sectionTerminals:
-		count := len(buildTerminalRows(row.folderIndex, folder, sessions))
-		meta = fmt.Sprintf("%d running", count)
-		description = "Runtime terminals and legacy sessions for this folder."
-		action = "Press n to create a terminal"
-	case sectionCommands:
-		count := len(folder.Commands)
-		meta = fmt.Sprintf("%d configured", count)
-		description = "Configured commands whether they are running or stopped."
-		action = "Command lifecycle controls appear here"
-	}
-
-	lines := []string{
-		m.styles.detailName.Render(title),
-		m.styles.detailMeta.Render(meta),
-		m.dividerLine(maxWidth),
-	}
-	lines = append(lines, wrapLines([]string{m.styles.infoValue.Render(description)}, maxWidth)...)
-	if action != "" {
-		lines = append(lines, "")
-		lines = append(lines, wrapLines([]string{m.styles.detailMeta.Render(action)}, maxWidth)...)
 	}
 	return lines
 }
@@ -2040,10 +1983,6 @@ func (m Model) promptTitle() string {
 	}
 }
 
-func (m Model) selectedLine(plain string, width int) string {
-	return m.styles.rowSelectedText.Width(width).Render(plain)
-}
-
 func (m Model) styledPane(content string, paneWidth, innerH int, dim bool) string {
 	// paneWidth is total outer width including border+padding.
 	// lipgloss Width includes padding but excludes border.
@@ -2119,23 +2058,21 @@ func (m Model) contentHeight() int {
 	return h
 }
 
-// treeRowVisualWeight returns how many visual lines row at index i will
-// consume, including preceding blank lines and trailing separators.
-// isFirstVisible indicates whether this is the first row in the visible window.
 func treeRowVisualWeight(rows []treeRow, i int, isFirstVisible bool) int {
-	row := rows[i]
-	w := 1 // the row itself
-	if row.typeOf == rowFolder {
-		if !isFirstVisible {
-			w += 2 // two blank lines before non-first folder
-		}
-		w += 1 // separator after folder
-	} else if row.typeOf == rowSection {
-		if i > 0 && rows[i-1].typeOf != rowFolder {
-			w += 1 // blank line before section (not first after folder)
-		}
+	if treeRowNeedsBreathingRoom(rows, i) {
+		return 2
 	}
-	return w
+	return 1
+}
+
+func treeRowNeedsBreathingRoom(rows []treeRow, i int) bool {
+	if i < 0 || i >= len(rows)-1 {
+		return false
+	}
+	if rows[i].typeOf == rowFolder {
+		return false
+	}
+	return rows[i+1].typeOf == rowFolder
 }
 
 // treeDataRowBudget computes how many data rows fit in maxVisual lines
@@ -2255,6 +2192,10 @@ func truncateMiddle(s string, max int) string {
 	head := (max - 1) / 2
 	tail := max - 1 - head
 	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+}
+
+func stripANSI(s string) string {
+	return ansi.Strip(s)
 }
 
 func padRight(s string, width int) string {

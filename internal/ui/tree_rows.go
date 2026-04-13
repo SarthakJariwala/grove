@@ -23,24 +23,9 @@ func buildTreeRows(cfg config.Config, sessions map[int][]tmux.Session, sessionBy
 	rows := make([]treeRow, 0)
 	for folderIndex, folder := range cfg.Folders {
 		rows = append(rows, treeRow{typeOf: rowFolder, folderIndex: folderIndex, displayName: folder.Name})
-
-		agentRows := buildAgentRows(folderIndex, folder, sessions[folderIndex])
-		if len(agentRows) > 0 {
-			rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionAgents, displayName: "Agents"})
-			rows = append(rows, agentRows...)
-		}
-
-		termRows := buildTerminalRows(folderIndex, folder, sessions[folderIndex])
-		if len(termRows) > 0 {
-			rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionTerminals, displayName: "Terminals"})
-			rows = append(rows, termRows...)
-		}
-
-		cmdRows := buildCommandRows(folderIndex, folder, sessionByName)
-		if len(folder.Commands) > 0 {
-			rows = append(rows, treeRow{typeOf: rowSection, folderIndex: folderIndex, section: sectionCommands, displayName: "Commands"})
-			rows = append(rows, cmdRows...)
-		}
+		rows = append(rows, buildAgentRows(folderIndex, folder, sessions[folderIndex])...)
+		rows = append(rows, buildTerminalRows(folderIndex, folder, sessions[folderIndex])...)
+		rows = append(rows, buildCommandRows(folderIndex, folder, sessionByName)...)
 	}
 	return rows
 }
@@ -113,7 +98,14 @@ func buildTerminalRows(folderIndex int, folder config.Folder, sessions []tmux.Se
 		}
 		rows = append(rows, sessionTreeRow(folderIndex, sectionTerminals, rowTerminalInstance, session, displayName))
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].sessionName < rows[j].sessionName })
+	sort.Slice(rows, func(i, j int) bool {
+		iManaged := strings.HasPrefix(rows[i].sessionName, folder.Namespace+"/term-")
+		jManaged := strings.HasPrefix(rows[j].sessionName, folder.Namespace+"/term-")
+		if iManaged != jManaged {
+			return iManaged
+		}
+		return rows[i].sessionName < rows[j].sessionName
+	})
 	return rows
 }
 
