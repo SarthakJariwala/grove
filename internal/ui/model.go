@@ -507,14 +507,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.newTerminalCmd(m.rows[m.selected].folderIndex, folder)
 		case "a":
-			row, ok := m.selectedRow()
-			if !ok || row.typeOf != rowFolder {
-				m.errMsg = "select a folder"
-				return m, nil
-			}
 			folder, ok := m.selectedFolder()
 			if !ok {
-				m.errMsg = "select a folder"
+				m.errMsg = "select a folder or one of its sections"
 				return m, nil
 			}
 			m.openAgentPicker(folder)

@@ -335,7 +335,7 @@ func TestUpdateAOpensAgentPicker(t *testing.T) {
 	}
 }
 
-func TestUpdateAOnChildRowRequiresFolderSelection(t *testing.T) {
+func TestUpdateAOnChildRowUsesFolderContext(t *testing.T) {
 	t.Parallel()
 
 	m := NewModel(config.Config{Folders: []config.Folder{{
@@ -350,10 +350,19 @@ func TestUpdateAOnChildRowRequiresFolderSelection(t *testing.T) {
 	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	got := model.(Model)
 	if cmd != nil {
-		t.Fatal("expected no command when add-agent is used on a child row")
+		t.Fatal("expected no command when opening the agent picker on a child row")
 	}
-	if got.errMsg != "select a folder" {
-		t.Fatalf("errMsg = %q, want %q", got.errMsg, "select a folder")
+	if got.overlayMode != overlayAgentPicker {
+		t.Fatalf("overlayMode = %v, want overlayAgentPicker", got.overlayMode)
+	}
+	if got.overlayFolderIndex != 0 {
+		t.Fatalf("overlayFolderIndex = %d, want 0", got.overlayFolderIndex)
+	}
+	if len(got.agentChoices) != 1 || !got.agentChoices[0].IsNew {
+		t.Fatalf("agentChoices = %#v, want only add-new choice", got.agentChoices)
+	}
+	if got.errMsg != "" {
+		t.Fatalf("errMsg = %q, want empty", got.errMsg)
 	}
 }
 
