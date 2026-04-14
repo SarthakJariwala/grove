@@ -77,6 +77,8 @@ const (
 	promptAddFolder
 	promptAddAgentName
 	promptAddAgentCommand
+	promptAddCommandName
+	promptAddCommandCommand
 )
 
 type detailMode int
@@ -151,12 +153,14 @@ type Model struct {
 	previewZoomed   bool
 	previewInFlight bool
 
-	prompt        textinput.Model
-	promptMode    promptMode
-	promptTarget  string
-	promptStep    int
-	pendingFolder config.Folder
-	pendingAgent  config.Agent
+	prompt            textinput.Model
+	promptMode        promptMode
+	promptTarget      string
+	promptFolderIndex int
+	promptStep        int
+	pendingFolder     config.Folder
+	pendingAgent      config.Agent
+	pendingCommand    config.Command
 }
 
 type styleSet struct {
@@ -320,6 +324,12 @@ type folderAddedMsg struct {
 	err    error
 }
 
+type commandAddedMsg struct {
+	folderIndex int
+	command     config.Command
+	err         error
+}
+
 type paneCapturedMsg struct {
 	target  string
 	content string
@@ -340,11 +350,12 @@ func NewModel(cfg config.Config, cfgPath string, client tmux.SessionManager) Mod
 		client:  client,
 		styles:  defaultStyles(),
 
-		sessions:       map[int][]tmux.Session{},
-		sessionWindows: map[string][]int{},
-		activeWindows:  map[string]int{},
-		previewWindow:  -1,
-		prompt:         t,
+		sessions:          map[int][]tmux.Session{},
+		sessionWindows:    map[string][]int{},
+		activeWindows:     map[string]int{},
+		previewWindow:     -1,
+		promptFolderIndex: -1,
+		prompt:            t,
 	}
 	m.rebuildRows()
 	return m
@@ -439,6 +450,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		clearCmd := m.setStatus("added folder: " + msg.folder.Name)
 		return m, tea.Batch(clearCmd, m.loadSessionsCmd())
 
+	case commandAddedMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		if msg.folderIndex < 0 || msg.folderIndex >= len(m.cfg.Folders) {
+			m.errMsg = "select a folder"
+			return m, nil
+		}
+		m.cfg.Folders[msg.folderIndex].Commands = append(m.cfg.Folders[msg.folderIndex].Commands, msg.command)
+		folder := m.cfg.Folders[msg.folderIndex]
+		m.rebuildRows()
+		target := treeRow{
+			typeOf:      rowCommand,
+			folderIndex: msg.folderIndex,
+			sessionName: commandSessionName(folder, msg.command.Name),
+		}
+		if index, ok := findMatchingRowIndex(m.rows, target); ok {
+			m.setSelected(index)
+		}
+		return m, m.setStatus("added dev command: " + msg.command.Name)
+
 	case clearStatusMsg:
 		if msg.seq == m.statusSeq {
 			m.statusMsg = ""
@@ -514,6 +547,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.openAgentPicker(folder)
 			return m, nil
+		case "d":
+			if _, ok := m.selectedFolder(); !ok {
+				m.errMsg = "select a folder or one of its sections"
+				return m, nil
+			}
+			m.promptFolderIndex = m.rows[m.selected].folderIndex
+			m.pendingCommand = config.Command{}
+			m.openPrompt(promptAddCommandName, "", "dev command name")
+			return m, textinput.Blink
 		case "s":
 			row, ok := m.selectedCommandRow()
 			if !ok || row.status == "running" {
@@ -538,9 +580,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.startCommandCmd(folder, row)
 		case "c":
-			row, ok := m.selectedSessionRow()
-			if !ok {
-				m.errMsg = "select a session to run command"
+			row, ok := m.selectedRow()
+			if !ok || (row.typeOf != rowAgentInstance && row.typeOf != rowTerminalInstance) {
+				m.errMsg = "select an agent or terminal to run command"
 				return m, nil
 			}
 			m.promptTarget = row.sessionName
@@ -757,12 +799,11 @@ func (m Model) renderHelpBar() string {
 			{"q", "back"},
 		}
 	} else if hasSelectedRow && selectedRow.typeOf == rowCommand {
-		bindings = []binding{{"e", "editor"}}
+		bindings = []binding{{"e", "editor"}, {"d", "dev command"}}
 		if selectedRow.status == "running" {
 			bindings = append(bindings,
 				binding{"⏎", "attach"},
 				binding{"v", "preview"},
-				binding{"c", "cmd"},
 				binding{"x", "stop"},
 				binding{"R", "restart"},
 			)
@@ -787,8 +828,9 @@ func (m Model) renderHelpBar() string {
 			{"e", "editor"},
 			{"n", "terminal"},
 			{"a", "agent"},
+			{"d", "dev command"},
 			{"K", "kill"},
-			{"c", "cmd"},
+			{"c", "send cmd"},
 			{"A", "add folder"},
 		}
 		if m.filterQuery != "" {
@@ -803,6 +845,7 @@ func (m Model) renderHelpBar() string {
 		bindings = []binding{
 			{"n", "new terminal"},
 			{"a", "agent"},
+			{"d", "dev command"},
 			{"e", "editor"},
 			{"A", "add folder"},
 			{"j/k", "navigate"},
@@ -1671,6 +1714,7 @@ func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if choice.IsNew {
 			m.closeOverlay()
 			m.pendingAgent = config.Agent{}
+			m.promptFolderIndex = folderIndex
 			m.openPrompt(promptAddAgentName, "", "agent name")
 			return m, textinput.Blink
 		}
@@ -1699,6 +1743,16 @@ func (m *Model) addFolderAgent(folderIndex int, agent config.Agent) {
 		}
 	}
 	m.cfg.Folders[folderIndex].Agents = append(m.cfg.Folders[folderIndex].Agents, agent)
+}
+
+func (m Model) folderHasCommandName(folderIndex int, commandName string) bool {
+	key := sanitizeLeaf(commandName)
+	for _, existing := range m.cfg.Folders[folderIndex].Commands {
+		if sanitizeLeaf(existing.Name) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) selectedSessionRow() (treeRow, bool) {
@@ -1891,6 +1945,9 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prompt.Blur()
 			m.promptMode = promptNone
 			m.promptTarget = ""
+			m.promptFolderIndex = -1
+			m.pendingAgent = config.Agent{}
+			m.pendingCommand = config.Command{}
 			m.statusMsg = ""
 			return m, nil
 		case "tab":
@@ -1905,6 +1962,9 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.prompt.Blur()
 				m.promptMode = promptNone
 				m.promptTarget = ""
+				m.promptFolderIndex = -1
+				m.pendingAgent = config.Agent{}
+				m.pendingCommand = config.Command{}
 			}
 
 			switch mode {
@@ -2016,17 +2076,46 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "agent command is required"
 					return m, nil
 				}
-				folderIndex := m.overlayFolderIndex
+				folderIndex := m.promptFolderIndex
 				if folderIndex < 0 || folderIndex >= len(m.cfg.Folders) {
 					m.errMsg = "select a folder"
 					return m, nil
 				}
 				agent := config.Agent{Name: m.pendingAgent.Name, Command: value}
-				m.pendingAgent = config.Agent{}
 				m.addFolderAgent(folderIndex, agent)
 				folder := m.cfg.Folders[folderIndex]
 				closePrompt()
 				return m, m.newAgentCmd(folderIndex, folder, agent, true)
+			case promptAddCommandName:
+				if value == "" {
+					m.errMsg = "command name is required"
+					return m, nil
+				}
+				folderIndex := m.promptFolderIndex
+				if folderIndex < 0 || folderIndex >= len(m.cfg.Folders) {
+					m.errMsg = "select a folder"
+					return m, nil
+				}
+				if m.folderHasCommandName(folderIndex, value) {
+					m.errMsg = "command name already exists"
+					return m, nil
+				}
+				m.pendingCommand.Name = value
+				m.openPrompt(promptAddCommandCommand, "", "dev command to run")
+				return m, textinput.Blink
+			case promptAddCommandCommand:
+				if value == "" {
+					m.errMsg = "command is required"
+					return m, nil
+				}
+				folderIndex := m.promptFolderIndex
+				if folderIndex < 0 || folderIndex >= len(m.cfg.Folders) {
+					m.errMsg = "select a folder"
+					return m, nil
+				}
+				command := config.Command{Name: m.pendingCommand.Name, Command: value}
+				closePrompt()
+				return m, m.addCommandCmd(folderIndex, command)
 			case promptFilter:
 				closePrompt()
 				m.filterQuery = value
@@ -2119,6 +2208,10 @@ func (m Model) promptTitle() string {
 		return "agent name:"
 	case promptAddAgentCommand:
 		return "agent command:"
+	case promptAddCommandName:
+		return "dev command name:"
+	case promptAddCommandCommand:
+		return "dev command:"
 	default:
 		return ""
 	}
@@ -2566,6 +2659,25 @@ func (m Model) addFolderCmd(f config.Folder) tea.Cmd {
 			return folderAddedMsg{err: err}
 		}
 		return folderAddedMsg{folder: f}
+	}
+}
+
+func (m Model) addCommandCmd(folderIndex int, command config.Command) tea.Cmd {
+	cfg := m.cfg
+	if folderIndex < 0 || folderIndex >= len(cfg.Folders) {
+		return func() tea.Msg {
+			return commandAddedMsg{err: fmt.Errorf("select a folder")}
+		}
+	}
+	cfg.Folders = append([]config.Folder(nil), cfg.Folders...)
+	commands := append([]config.Command(nil), cfg.Folders[folderIndex].Commands...)
+	cfg.Folders[folderIndex].Commands = append(commands, command)
+	cfgPath := m.cfgPath
+	return func() tea.Msg {
+		if err := configfile.Save(cfgPath, cfg); err != nil {
+			return commandAddedMsg{err: err}
+		}
+		return commandAddedMsg{folderIndex: folderIndex, command: command}
 	}
 }
 

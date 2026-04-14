@@ -498,7 +498,7 @@ func TestRenderHelpBarCommandRowsShowLifecycleBindings(t *testing.T) {
 	m.rows = []treeRow{{typeOf: rowCommand, folderIndex: 0, sessionName: "api/cmd-start", displayName: "start", commandText: "make start", status: "running"}}
 
 	running := m.renderHelpBar()
-	for _, want := range []string{"attach", "preview", "cmd", "stop", "restart"} {
+	for _, want := range []string{"attach", "preview", "stop", "restart", "dev command"} {
 		if !strings.Contains(running, want) {
 			t.Fatalf("running help bar = %q, want %q", running, want)
 		}
@@ -506,17 +506,52 @@ func TestRenderHelpBarCommandRowsShowLifecycleBindings(t *testing.T) {
 	if strings.Contains(running, "kill") {
 		t.Fatalf("running help bar = %q, should not advertise kill for command rows", running)
 	}
+	if strings.Contains(running, "send cmd") {
+		t.Fatalf("running help bar = %q, should not advertise send cmd for command rows", running)
+	}
 
 	m.rows[0].status = "stopped"
 	stopped := m.renderHelpBar()
-	for _, want := range []string{"start", "restart"} {
+	for _, want := range []string{"start", "restart", "dev command"} {
 		if !strings.Contains(stopped, want) {
 			t.Fatalf("stopped help bar = %q, want %q", stopped, want)
 		}
 	}
-	for _, unwanted := range []string{"attach", "preview", "cmd", "kill"} {
+	for _, unwanted := range []string{"attach", "preview", "send cmd", "kill"} {
 		if strings.Contains(stopped, unwanted) {
 			t.Fatalf("stopped help bar = %q, should not include %q", stopped, unwanted)
+		}
+	}
+}
+
+func TestRenderHelpBarFolderRowsShowDevCommandWithoutSendCmd(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.rebuildRows()
+	m.setSelected(0)
+
+	got := m.renderHelpBar()
+	if !strings.Contains(got, "dev command") {
+		t.Fatalf("folder help bar = %q, want dev command binding", got)
+	}
+	if strings.Contains(got, "send cmd") {
+		t.Fatalf("folder help bar = %q, should not advertise send cmd on folder rows", got)
+	}
+}
+
+func TestRenderHelpBarSessionRowsShowSendCmdAndDevCommand(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/term-1", Windows: 1}}}
+	m.rebuildRows()
+	m.setSelected(1)
+
+	got := m.renderHelpBar()
+	for _, want := range []string{"send cmd", "dev command"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("session help bar = %q, want %q", got, want)
 		}
 	}
 }

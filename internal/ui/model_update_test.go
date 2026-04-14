@@ -522,6 +522,111 @@ func TestAddNewAgentPromptValidationStaysOpen(t *testing.T) {
 	}
 }
 
+func TestUpdateDOnChildRowUsesFolderContext(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "start", Command: "make start"}},
+	}}}, "config.toml", &trackingSessionManager{})
+	m.rebuildRows()
+	m.setSelected(1) // [0]=folder, [1]=command
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	got := model.(Model)
+	if cmd == nil {
+		t.Fatal("expected prompt blink command when add-command is used on a child row")
+	}
+	if got.promptMode != promptAddCommandName {
+		t.Fatalf("promptMode = %v, want promptAddCommandName", got.promptMode)
+	}
+	if got.promptFolderIndex != 0 {
+		t.Fatalf("promptFolderIndex = %d, want 0", got.promptFolderIndex)
+	}
+	if got.errMsg != "" {
+		t.Fatalf("errMsg = %q, want empty", got.errMsg)
+	}
+}
+
+func TestAddDevCommandPromptPersistsAndSelectsNewCommand(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	cfgPath := filepath.Join(tempDir, "config.toml")
+	cfg := config.Config{Folders: []config.Folder{
+		{Name: "API", Path: "/tmp/api", Namespace: "api"},
+		{
+			Name:      "Web",
+			Path:      "/tmp/web",
+			Namespace: "web",
+			Commands:  []config.Command{{Name: "start", Command: "make start"}},
+		},
+	}}
+	if err := configfile.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	m := NewModel(cfg, cfgPath, &trackingSessionManager{})
+	m.rebuildRows()
+	m.setSelected(2) // [0]=API folder, [1]=Web folder, [2]=start command
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	withNamePrompt := model.(Model)
+	if cmd == nil {
+		t.Fatal("expected prompt blink command when entering add-command flow")
+	}
+	if withNamePrompt.promptMode != promptAddCommandName {
+		t.Fatalf("promptMode = %v, want promptAddCommandName", withNamePrompt.promptMode)
+	}
+
+	withNamePrompt.prompt.SetValue("Dev")
+	model, cmd = withNamePrompt.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	withCommandPrompt := model.(Model)
+	if cmd == nil {
+		t.Fatal("submitting command name should return a prompt blink command")
+	}
+	if withCommandPrompt.promptMode != promptAddCommandCommand {
+		t.Fatalf("promptMode = %v, want promptAddCommandCommand", withCommandPrompt.promptMode)
+	}
+
+	withCommandPrompt.prompt.SetValue("make dev")
+	model, cmd = withCommandPrompt.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	afterSubmit := model.(Model)
+	if cmd == nil {
+		t.Fatal("expected command persistence command")
+	}
+	if afterSubmit.promptMode != promptNone {
+		t.Fatalf("promptMode = %v, want promptNone", afterSubmit.promptMode)
+	}
+
+	msg := cmd()
+	persistedModel, persistedCmd := afterSubmit.Update(msg)
+	got := persistedModel.(Model)
+	if persistedCmd == nil {
+		t.Fatal("expected follow-up refresh/status command after command persistence")
+	}
+	if len(got.cfg.Folders[1].Commands) != 2 || got.cfg.Folders[1].Commands[1].Name != "Dev" {
+		t.Fatalf("folder commands = %#v, want appended Dev command", got.cfg.Folders[1].Commands)
+	}
+	selected, ok := got.selectedRow()
+	if !ok {
+		t.Fatal("expected selected row after command persistence")
+	}
+	if selected.typeOf != rowCommand || selected.sessionName != "web/cmd-dev" {
+		t.Fatalf("selected row = %#v, want web/cmd-dev command row", selected)
+	}
+
+	reloaded, err := configfile.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reloaded.Folders[1].Commands) != 2 || reloaded.Folders[1].Commands[1].Command != "make dev" {
+		t.Fatalf("reloaded web folder commands = %#v, want persisted Dev command", reloaded.Folders[1].Commands)
+	}
+}
+
 func TestUpdateSStartsStoppedCommandWithoutAttaching(t *testing.T) {
 	t.Parallel()
 
@@ -605,6 +710,27 @@ func TestUpdateKDoesNotKillRunningCommand(t *testing.T) {
 	}
 	if len(fake.killed) != 0 {
 		t.Fatalf("killed sessions = %#v, want none", fake.killed)
+	}
+}
+
+func TestUpdateCDoesNotOpenPromptForCommandRow(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "start", Command: "make start"}},
+	}}}, "config.toml", &trackingSessionManager{})
+	m.rows = []treeRow{{typeOf: rowCommand, folderIndex: 0, sessionName: "api/cmd-start", displayName: "start", commandText: "make start", status: "running"}}
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	got := model.(Model)
+	if cmd != nil {
+		t.Fatal("expected no prompt command for command row")
+	}
+	if got.errMsg != "select an agent or terminal to run command" {
+		t.Fatalf("errMsg = %q, want %q", got.errMsg, "select an agent or terminal to run command")
 	}
 }
 
