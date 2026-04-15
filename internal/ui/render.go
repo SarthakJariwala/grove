@@ -380,6 +380,13 @@ func (m Model) renderTreePane(innerH, maxWidth, paneWidth int, dim bool) string 
 
 const treeChildIndent = "    "
 
+func commandTreeIcon(row treeRow) string {
+	if row.status == "running" {
+		return "▶"
+	}
+	return "■"
+}
+
 func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
@@ -394,7 +401,7 @@ func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	case rowTerminalInstance:
 		return treeJustify(treeChildIndent+"○ "+row.displayName, "", maxWidth)
 	case rowCommand:
-		return treeJustify(treeChildIndent+"▸ "+row.displayName, "", maxWidth)
+		return treeJustify(treeChildIndent+commandTreeIcon(row)+" "+row.displayName, "", maxWidth)
 	default:
 		return ""
 	}
@@ -470,7 +477,11 @@ func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
 			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		return treeChildIndent + m.styles.childIconDim.Render("▸") + " " + name
+		icon := m.styles.childIconDim.Render(commandTreeIcon(row))
+		if row.status == "running" {
+			icon = m.styles.childIconActive.Render(commandTreeIcon(row))
+		}
+		return treeChildIndent + icon + " " + name
 	default:
 		return plain
 	}

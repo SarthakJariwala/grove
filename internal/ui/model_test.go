@@ -408,7 +408,7 @@ func TestTreeLineTextChildrenUseDeeperIndent(t *testing.T) {
 	for idx, want := range map[int]string{
 		1: "    ◆ Pi #1",
 		2: "    ○ Terminal #1",
-		3: "    ▸ dev",
+		3: "    ■ dev",
 	} {
 		got := m.treeLineText(m.rows[idx], 40)
 		if !strings.HasPrefix(got, want) {
@@ -437,7 +437,7 @@ func TestRenderTreePaneShowsDirectChildrenWithoutSectionHeadings(t *testing.T) {
 
 	got := m.renderTreePane(8, 40, 44, false)
 
-	for _, want := range []string{"◆ Pi #1", "active", "○ Terminal #1", "▸ dev"} {
+	for _, want := range []string{"◆ Pi #1", "active", "○ Terminal #1", "■ dev"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("tree view = %q, want %q", got, want)
 		}
@@ -467,11 +467,37 @@ func TestRenderTreePaneAddsBreathingRoomAfterExpandedFolderOnly(t *testing.T) {
 	if !strings.Contains(got, "○ Terminal #1") || !strings.Contains(got, "● Web") {
 		t.Fatalf("tree view = %q, expected expanded then collapsed folders", got)
 	}
-	if !strings.Contains(got, "│     ▸ dev                                │\n│                                          │\n│ ▸ ● Web") {
+	if !strings.Contains(got, "│     ■ dev                                │\n│                                          │\n│ ▸ ● Web") {
 		t.Fatalf("tree view = %q, want one blank line between expanded folder content and next folder", got)
 	}
 	if strings.Contains(got, "▸ ● Web                               │\n│                                          │\n│ ▸ ● Docs") {
 		t.Fatalf("tree view = %q, should not add blank line between collapsed folders", got)
+	}
+}
+
+func TestRenderTreePaneShowsRunningCommandIcon(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{Folders: []config.Folder{{
+		Name:      "API",
+		Path:      "/tmp/api",
+		Namespace: "api",
+		Commands:  []config.Command{{Name: "dev", Command: "make dev"}},
+	}}}
+	m := NewModel(cfg, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{
+		0: {
+			{Name: "api/cmd-dev", Windows: 1, CurrentCommand: "make"},
+		},
+	}
+	m.rebuildRows()
+
+	got := m.renderTreePane(6, 40, 44, false)
+	if !strings.Contains(got, "▶ dev") {
+		t.Fatalf("tree view = %q, want running command icon", got)
+	}
+	if strings.Contains(got, "■ dev") {
+		t.Fatalf("tree view = %q, should not show stopped command icon", got)
 	}
 }
 
