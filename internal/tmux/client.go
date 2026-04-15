@@ -37,24 +37,38 @@ type PaneInfo struct {
 	CurrentPath  string
 }
 
-type SessionManager interface {
-	ListSessions() ([]Session, error)
-	ListPanes() ([]PaneInfo, error)
-	NewSession(name, cwd string) error
-	NewSessionWithCommand(name, cwd, command string) error
-	SendKeys(target, command string) error
-	RenameSession(oldName, newName string) error
-	KillSession(name string) error
-	CapturePane(target string) (string, error)
-	AttachCommand(name string) *exec.Cmd
+type SessionSnapshot struct {
+	Sessions       []Session
+	SessionWindows map[string][]int
+	ActiveWindows  map[string]int
+	PaneDataFresh  bool
 }
 
 type Client struct{}
 
 var execCommand = exec.Command
 
-func NewClient() SessionManager {
+func NewClient() *Client {
 	return &Client{}
+}
+
+func (c *Client) LoadSnapshot() (SessionSnapshot, error) {
+	sessions, err := c.ListSessions()
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+
+	panes, err := c.ListPanes()
+	if err != nil {
+		return SessionSnapshot{
+			Sessions:       append([]Session(nil), sessions...),
+			SessionWindows: map[string][]int{},
+			ActiveWindows:  map[string]int{},
+			PaneDataFresh:  false,
+		}, nil
+	}
+
+	return AssembleSessionSnapshot(sessions, panes), nil
 }
 
 func (c *Client) ListSessions() ([]Session, error) {
@@ -181,6 +195,35 @@ type ActivePaneState struct {
 	BellFlag     bool
 	ActivityFlag bool
 	SilenceFlag  bool
+}
+
+func AssembleSessionSnapshot(sessions []Session, panes []PaneInfo) SessionSnapshot {
+	snapshot := SessionSnapshot{
+		Sessions:       append([]Session(nil), sessions...),
+		SessionWindows: SessionWindowIndexes(panes),
+		ActiveWindows:  ActiveWindowIndexes(panes),
+		PaneDataFresh:  true,
+	}
+
+	states := ActivePaneStates(panes)
+	for i := range snapshot.Sessions {
+		if st, ok := states[snapshot.Sessions[i].Name]; ok {
+			snapshot.Sessions[i].CurrentCommand = st.Command
+			snapshot.Sessions[i].PaneTitle = st.PaneTitle
+			snapshot.Sessions[i].CurrentPath = st.CurrentPath
+			if st.BellFlag {
+				snapshot.Sessions[i].AlertsBell = true
+			}
+			if st.ActivityFlag {
+				snapshot.Sessions[i].AlertsActivity = true
+			}
+			if st.SilenceFlag {
+				snapshot.Sessions[i].AlertsSilence = true
+			}
+		}
+	}
+
+	return snapshot
 }
 
 func ActivePaneStates(panes []PaneInfo) map[string]ActivePaneState {

@@ -15,3 +15,14 @@ func TestDefaultConfigPath(t *testing.T) {
 		t.Fatalf("defaultConfigPath() = %q, want %q", got, want)
 	}
 }
+
+func TestDefaultConfigPathUsesXDGConfigHome(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	got := defaultConfigPath()
+	want := filepath.Join(xdg, "grove", "config.toml")
+	if got != want {
+		t.Fatalf("defaultConfigPath() = %q, want %q", got, want)
+	}
+}

@@ -35,6 +35,25 @@ type fakeSessionManager struct {
 	capturePaneFn  func(target string) (string, error)
 }
 
+func (f fakeSessionManager) LoadSnapshot() (tmux.SessionSnapshot, error) {
+	sessions, err := f.ListSessions()
+	if err != nil {
+		return tmux.SessionSnapshot{}, err
+	}
+
+	panes, err := f.ListPanes()
+	if err != nil {
+		return tmux.SessionSnapshot{
+			Sessions:       append([]tmux.Session(nil), sessions...),
+			SessionWindows: map[string][]int{},
+			ActiveWindows:  map[string]int{},
+			PaneDataFresh:  false,
+		}, nil
+	}
+
+	return tmux.AssembleSessionSnapshot(sessions, panes), nil
+}
+
 func (f fakeSessionManager) ListSessions() ([]tmux.Session, error) {
 	if f.listSessionsFn == nil {
 		return nil, nil

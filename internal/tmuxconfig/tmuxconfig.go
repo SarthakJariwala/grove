@@ -26,12 +26,17 @@ func EnsureDefault() (bool, string, error) {
 		return false, "", nil
 	}
 
-	// XDG location.
-	xdgBase := os.Getenv("XDG_CONFIG_HOME")
-	if xdgBase == "" {
-		xdgBase = filepath.Join(home, ".config")
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		configDir, err = os.UserConfigDir()
+		if err != nil {
+			return false, "", fmt.Errorf("determine config directory: %w", err)
+		}
+		if filepath.Base(configDir) != ".config" {
+			configDir = filepath.Join(home, ".config")
+		}
 	}
-	xdgPath := filepath.Join(xdgBase, "tmux", "tmux.conf")
+	xdgPath := filepath.Join(configDir, "tmux", "tmux.conf")
 	if fileExists(xdgPath) {
 		return false, "", nil
 	}

@@ -25,6 +25,15 @@ type trackingSessionManager struct {
 	sentCmds []string
 }
 
+func (f *trackingSessionManager) LoadSnapshot() (tmux.SessionSnapshot, error) {
+	return tmux.SessionSnapshot{
+		Sessions:       []tmux.Session{},
+		SessionWindows: map[string][]int{},
+		ActiveWindows:  map[string]int{},
+		PaneDataFresh:  true,
+	}, nil
+}
+
 func (f *trackingSessionManager) ListSessions() ([]tmux.Session, error) { return nil, nil }
 
 func (f *trackingSessionManager) ListPanes() ([]tmux.PaneInfo, error) { return nil, nil }

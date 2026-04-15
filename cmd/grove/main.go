@@ -15,12 +15,23 @@ import (
 )
 
 func defaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "config.toml"
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		var err error
+		configDir, err = os.UserConfigDir()
+		if err != nil {
+			return "config.toml"
+		}
+		if filepath.Base(configDir) != ".config" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "config.toml"
+			}
+			configDir = filepath.Join(home, ".config")
+		}
 	}
 
-	return filepath.Join(home, ".config", "grove", "config.toml")
+	return filepath.Join(configDir, "grove", "config.toml")
 }
 
 func run() error {

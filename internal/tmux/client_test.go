@@ -198,6 +198,65 @@ func TestActiveWindowIndexes(t *testing.T) {
 	}
 }
 
+func TestAssembleSessionSnapshot(t *testing.T) {
+	t.Parallel()
+
+	snapshot := AssembleSessionSnapshot(
+		[]Session{{Name: "api/one"}},
+		[]PaneInfo{{
+			SessionName:  "api/one",
+			WindowIndex:  2,
+			Command:      "go",
+			PaneActive:   true,
+			WindowActive: true,
+			PaneTitle:    "* Claude",
+			CurrentPath:  "/tmp/api",
+			ActivityFlag: true,
+			BellFlag:     true,
+		}},
+	)
+
+	if !snapshot.PaneDataFresh {
+		t.Fatal("PaneDataFresh = false, want true")
+	}
+	if got := snapshot.SessionWindows["api/one"]; fmt.Sprint(got) != "[2]" {
+		t.Fatalf("SessionWindows = %v, want [2]", got)
+	}
+	if got := snapshot.ActiveWindows["api/one"]; got != 2 {
+		t.Fatalf("ActiveWindows[api/one] = %d, want 2", got)
+	}
+	if got := snapshot.Sessions[0]; got.CurrentCommand != "go" || got.PaneTitle != "Claude" || got.CurrentPath != "/tmp/api" || !got.AlertsBell || !got.AlertsActivity {
+		t.Fatalf("session = %#v, want merged pane metadata", got)
+	}
+}
+
+func TestLoadSnapshotReturnsSessionsWhenListPanesFails(t *testing.T) {
+	restore := stubExecCommand(t, func(name string, args ...string) *exec.Cmd {
+		_ = name
+		switch args[0] {
+		case "list-sessions":
+			return helperCommand(t, "session_ok")
+		case "list-panes":
+			return helperCommand(t, "mutate_error")
+		default:
+			return helperCommand(t, "mutate_ok")
+		}
+	})
+	defer restore()
+
+	client := &Client{}
+	snapshot, err := client.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if snapshot.PaneDataFresh {
+		t.Fatal("PaneDataFresh = true, want false")
+	}
+	if len(snapshot.Sessions) != 2 {
+		t.Fatalf("len(snapshot.Sessions) = %d, want 2", len(snapshot.Sessions))
+	}
+}
+
 func stubExecCommand(t *testing.T, fn func(name string, args ...string) *exec.Cmd) func() {
 	t.Helper()
 	old := execCommand

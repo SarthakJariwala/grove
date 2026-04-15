@@ -100,9 +100,9 @@ func TestAppendFolder(t *testing.T) {
 	}
 
 	f := config.Folder{
-		Name:          "Main API",
+		Name:          " Main API ",
 		Path:          "/tmp/main-api",
-		EditorCommand: "zed .",
+		EditorCommand: " zed . ",
 	}
 
 	if err := AppendFolder(cfgPath, f); err != nil {
@@ -119,6 +119,9 @@ func TestAppendFolder(t *testing.T) {
 	}
 	if len(loaded.Folders) != 1 || loaded.Folders[0].Name != "Main API" {
 		t.Fatalf("loaded.Folders = %#v, want appended folder", loaded.Folders)
+	}
+	if loaded.Folders[0].EditorCommand != "zed ." {
+		t.Fatalf("loaded.Folders[0].EditorCommand = %q, want %q", loaded.Folders[0].EditorCommand, "zed .")
 	}
 }
 
@@ -225,6 +228,40 @@ func TestSaveRoundTripsNestedAgentsAndCommands(t *testing.T) {
 	}
 	if len(got.Folders[0].Commands) != 1 || got.Folders[0].Commands[0].Command != "make start" {
 		t.Fatalf("got.Folders[0].Commands = %#v, want preserved folder command", got.Folders[0].Commands)
+	}
+}
+
+func TestSaveNormalizesBeforeWrite(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	projects := filepath.Join(tmp, "projects")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	cfgPath := filepath.Join(tmp, "config.toml")
+	if err := Save(cfgPath, config.Config{Folders: []config.Folder{{
+		Name:          " API ",
+		Path:          " ./projects ",
+		EditorCommand: " zed . ",
+	}}}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	content := string(b)
+	if !strings.Contains(content, `name = "API"`) {
+		t.Fatalf("content = %q, want trimmed folder name", content)
+	}
+	if !strings.Contains(content, `editor_command = "zed ."`) {
+		t.Fatalf("content = %q, want trimmed editor command", content)
+	}
+	if !strings.Contains(content, `path = "`+projects+`"`) {
+		t.Fatalf("content = %q, want normalized absolute path", content)
 	}
 }
 

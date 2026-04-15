@@ -33,6 +33,9 @@ func Save(path string, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	if err := cfg.Normalize(filepath.Dir(resolvedPath)); err != nil {
+		return err
+	}
 
 	dir := filepath.Dir(resolvedPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -105,7 +108,9 @@ func AppendFolder(path string, f config.Folder) error {
 		return fmt.Errorf("check config %q: %w", path, err)
 	}
 
-	cfg.Folders = append(cfg.Folders, f)
+	if err := config.AppendFolder(&cfg, f); err != nil {
+		return err
+	}
 	return Save(path, cfg)
 }
 
