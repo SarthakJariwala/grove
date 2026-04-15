@@ -225,7 +225,7 @@ func TestRenderTreePaneOmitsSessionRuntimeMetadata(t *testing.T) {
 
 	got := m.renderTreePane(8, 60, 64, false)
 
-	for _, want := range []string{"● API", "○ one"} {
+	for _, want := range []string{"● API", "● one"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("tree view = %q, want %q", got, want)
 		}
@@ -498,6 +498,28 @@ func TestRenderTreePaneShowsRunningCommandIcon(t *testing.T) {
 	}
 	if strings.Contains(got, "■ dev") {
 		t.Fatalf("tree view = %q, should not show stopped command icon", got)
+	}
+}
+
+func TestTerminalTreeIconUsesFilledCircleForActiveCommands(t *testing.T) {
+	t.Parallel()
+
+	if got := terminalTreeIcon(treeRow{typeOf: rowTerminalInstance, currentCommand: "npm"}); got != "●" {
+		t.Fatalf("terminalTreeIcon(active) = %q, want filled circle", got)
+	}
+	if got := terminalTreeIcon(treeRow{typeOf: rowTerminalInstance, currentCommand: "zsh"}); got != "○" {
+		t.Fatalf("terminalTreeIcon(shell) = %q, want hollow circle", got)
+	}
+}
+
+func TestTerminalTreeIconStyleHighlightsActiveCommands(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+	got := m.terminalTreeIconStyle(treeRow{typeOf: rowTerminalInstance, currentCommand: "npm"}).GetForeground()
+	want := lipgloss.Color(colorTreeActive)
+	if !colorsEqual(got, want) {
+		t.Fatalf("terminalTreeIconStyle(active).Foreground = %v, want %v", got, want)
 	}
 }
 

@@ -387,6 +387,25 @@ func commandTreeIcon(row treeRow) string {
 	return "■"
 }
 
+func rowHasActiveCommand(row treeRow) bool {
+	command := strings.TrimSpace(row.currentCommand)
+	return command != "" && !isShellCommand(command)
+}
+
+func terminalTreeIcon(row treeRow) string {
+	if rowHasActiveCommand(row) {
+		return "●"
+	}
+	return "○"
+}
+
+func (m Model) terminalTreeIconStyle(row treeRow) lipgloss.Style {
+	if rowHasActiveCommand(row) {
+		return m.styles.childIconActive
+	}
+	return m.styles.childIconDim
+}
+
 func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
@@ -399,7 +418,7 @@ func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	case rowAgentInstance:
 		return treeJustify(treeChildIndent+"◆ "+row.displayName, "active", maxWidth)
 	case rowTerminalInstance:
-		return treeJustify(treeChildIndent+"○ "+row.displayName, "", maxWidth)
+		return treeJustify(treeChildIndent+terminalTreeIcon(row)+" "+row.displayName, "", maxWidth)
 	case rowCommand:
 		return treeJustify(treeChildIndent+commandTreeIcon(row)+" "+row.displayName, "", maxWidth)
 	default:
@@ -471,7 +490,7 @@ func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
 			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		return treeChildIndent + m.styles.childIconDim.Render("○") + " " + name
+		return treeChildIndent + m.terminalTreeIconStyle(row).Render(terminalTreeIcon(row)) + " " + name
 	case rowCommand:
 		name := m.styles.rowSession.Render(row.displayName)
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
