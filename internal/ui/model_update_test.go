@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -624,6 +625,60 @@ func TestAddDevCommandPromptPersistsAndSelectsNewCommand(t *testing.T) {
 	}
 	if len(reloaded.Folders[1].Commands) != 2 || reloaded.Folders[1].Commands[1].Command != "make dev" {
 		t.Fatalf("reloaded web folder commands = %#v, want persisted Dev command", reloaded.Folders[1].Commands)
+	}
+}
+
+func TestUpdateAddFolderPromptPersistsFolderAndClosesPrompt(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	folderPath := filepath.Join(tempDir, "workspace")
+	if err := os.Mkdir(folderPath, 0o755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	cfgPath := filepath.Join(tempDir, "config.toml")
+	if err := configfile.Save(cfgPath, config.Config{}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	m := NewModel(config.Config{}, cfgPath, &trackingSessionManager{})
+	m.rebuildRows()
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	step0 := model.(Model)
+	if cmd == nil || step0.promptMode != promptAddFolder {
+		t.Fatalf("prompt start = %#v, cmd=%v; want promptAddFolder with blink", step0.promptMode, cmd)
+	}
+
+	step0.prompt.SetValue("API")
+	model, cmd = step0.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	step1 := model.(Model)
+	if cmd == nil || step1.promptStep != 1 {
+		t.Fatalf("after folder name: promptStep=%d, cmd=%v; want 1 with blink", step1.promptStep, cmd)
+	}
+
+	step1.prompt.SetValue(folderPath)
+	model, cmd = step1.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	step2 := model.(Model)
+	if cmd == nil || step2.promptStep != 2 {
+		t.Fatalf("after folder path: promptStep=%d, cmd=%v; want 2 with blink", step2.promptStep, cmd)
+	}
+
+	step2.prompt.SetValue("zed .")
+	model, cmd = step2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	afterSubmit := model.(Model)
+	if cmd == nil {
+		t.Fatal("expected folder persistence command")
+	}
+	if afterSubmit.promptMode != promptNone {
+		t.Fatalf("promptMode = %v, want promptNone", afterSubmit.promptMode)
+	}
+
+	msg := cmd()
+	persisted, _ := afterSubmit.Update(msg)
+	got := persisted.(Model)
+	if len(got.cfg.Folders) != 1 || got.cfg.Folders[0].Namespace != "api" {
+		t.Fatalf("folders = %#v, want one persisted API folder", got.cfg.Folders)
 	}
 }
 

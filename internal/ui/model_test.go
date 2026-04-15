@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -747,6 +748,35 @@ func TestLoadSessionsCmdError(t *testing.T) {
 	}
 	if loaded.err == nil || loaded.err.Error() != "boom" {
 		t.Fatalf("sessionsLoadedMsg.err = %v, want boom", loaded.err)
+	}
+}
+
+func TestLoadSessionsCmdGroupsSessionsWhenListPanesFails(t *testing.T) {
+	t.Parallel()
+
+	fake := fakeSessionManager{
+		listSessionsFn: func() ([]tmux.Session, error) {
+			return []tmux.Session{{Name: "api/one", Windows: 1}}, nil
+		},
+		listPanesFn: func() ([]tmux.PaneInfo, error) {
+			return nil, errors.New("tmux list-panes failed")
+		},
+	}
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fake)
+
+	msg := m.loadSessionsCmd()()
+	loaded, ok := msg.(sessionsLoadedMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want sessionsLoadedMsg", msg)
+	}
+	if loaded.err != nil {
+		t.Fatalf("err = %v, want nil", loaded.err)
+	}
+	if len(loaded.sessions[0]) != 1 || loaded.sessions[0][0].Name != "api/one" {
+		t.Fatalf("sessions = %#v, want grouped api/one session", loaded.sessions)
+	}
+	if loaded.panesFresh {
+		t.Fatal("panesFresh = true, want false when ListPanes fails")
 	}
 }
 
