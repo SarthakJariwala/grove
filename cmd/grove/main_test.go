@@ -8,6 +8,7 @@ import (
 func TestDefaultConfigPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	got := defaultConfigPath()
 	want := filepath.Join(home, ".config", "grove", "config.toml")
