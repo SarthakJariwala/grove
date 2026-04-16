@@ -467,6 +467,21 @@ func TestTreeLineTextFolderOmitsSessionCountWhenActive(t *testing.T) {
 	}
 }
 
+func TestTreeLineStyledFolderPreservesNameAndStatusDot(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/term-1", Windows: 1}}}
+	m.rebuildRows()
+
+	got := stripANSI(m.treeLineStyled(m.rows[0], m.treeLineText(m.rows[0], 28), 28))
+	for _, want := range []string{"▾", "●", "API"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("treeLineStyled(folder) = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestTreeLineTextChildrenUseDeeperIndent(t *testing.T) {
 	t.Parallel()
 

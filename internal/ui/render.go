@@ -483,7 +483,7 @@ func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 			dot = m.styles.folderDotActive.Render("●")
 		}
 
-		return truncateRight(m.styles.detailMeta.Render(m.folderCaret(row.folderIndex))+" "+dot+" "+nameStyle.Render(row.displayName), maxWidth)
+		return m.styles.detailMeta.Render(m.folderCaret(row.folderIndex)) + " " + dot + " " + nameStyle.Render(row.displayName)
 	case rowAgentInstance:
 		name := m.styles.rowSession.Render(row.displayName)
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
