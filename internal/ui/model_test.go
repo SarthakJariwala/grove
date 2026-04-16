@@ -337,6 +337,73 @@ func TestRenderDetailPaneFolderSummarizesSections(t *testing.T) {
 	}
 }
 
+func TestSessionSummaryLineOmitsAttachmentStateAndKeepsActivityIcons(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+
+	activeTerminal := m.sessionSummaryLine(treeRow{
+		typeOf:         rowTerminalInstance,
+		displayName:    "Terminal #1",
+		currentCommand: "npm",
+		windows:        2,
+	}, 80)
+	if !strings.Contains(activeTerminal, "●") {
+		t.Fatalf("active terminal summary = %q, want filled activity icon", activeTerminal)
+	}
+	if !strings.Contains(activeTerminal, "Terminal #1") {
+		t.Fatalf("active terminal summary = %q, want session name", activeTerminal)
+	}
+	for _, hidden := range []string{"attached", "detached", "2w"} {
+		if strings.Contains(activeTerminal, hidden) {
+			t.Fatalf("active terminal summary = %q, should not include %q", activeTerminal, hidden)
+		}
+	}
+
+	idleTerminal := m.sessionSummaryLine(treeRow{
+		typeOf:         rowTerminalInstance,
+		displayName:    "Terminal #2",
+		currentCommand: "zsh",
+		windows:        1,
+	}, 80)
+	if !strings.Contains(idleTerminal, "○") {
+		t.Fatalf("idle terminal summary = %q, want hollow activity icon", idleTerminal)
+	}
+
+	agent := m.sessionSummaryLine(treeRow{
+		typeOf:      rowAgentInstance,
+		displayName: "Amp #1",
+		windows:     1,
+	}, 80)
+	if !strings.Contains(agent, "◆") {
+		t.Fatalf("agent summary = %q, want agent icon", agent)
+	}
+}
+
+func TestInstanceDetailLinesUseIndicatorMetaWithoutAttachmentState(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{}, "config.toml", fakeSessionManager{})
+	got := strings.Join(m.instanceDetailLines(treeRow{
+		typeOf:         rowTerminalInstance,
+		displayName:    "Terminal #1",
+		currentCommand: "npm",
+		windows:        2,
+	}, 80), "\n")
+
+	if !strings.Contains(got, "●") {
+		t.Fatalf("instance detail lines = %q, want activity icon in header metadata", got)
+	}
+	if !strings.Contains(got, "2 windows") {
+		t.Fatalf("instance detail lines = %q, want window count", got)
+	}
+	for _, hidden := range []string{"attached", "detached"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("instance detail lines = %q, should not include %q", got, hidden)
+		}
+	}
+}
+
 func TestRenderHeaderShowsFolderCountOnly(t *testing.T) {
 	t.Parallel()
 
@@ -384,6 +451,19 @@ func TestTreeLineTextFolderOmitsIdleZeroCount(t *testing.T) {
 	}
 	if !strings.Contains(got, "●") {
 		t.Fatalf("treeLineText(folder) = %q, want status dot", got)
+	}
+}
+
+func TestTreeLineTextFolderOmitsSessionCountWhenActive(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(config.Config{Folders: []config.Folder{{Name: "API", Path: "/tmp/api", Namespace: "api"}}}, "config.toml", fakeSessionManager{})
+	m.sessions = map[int][]tmux.Session{0: {{Name: "api/term-1", Windows: 1}}}
+	m.rebuildRows()
+
+	got := m.treeLineText(m.rows[0], 40)
+	if strings.Contains(got, " 1") || strings.HasSuffix(strings.TrimSpace(got), "1") {
+		t.Fatalf("treeLineText(folder) = %q, should not include active session count", got)
 	}
 }
 

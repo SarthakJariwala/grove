@@ -270,10 +270,6 @@ const (
 	folderStatusAttention
 )
 
-func (m Model) folderSessionCount(folderIndex int) int {
-	return len(m.sessions[folderIndex])
-}
-
 func (m Model) folderStatus(folderIndex int) folderVisualStatus {
 	sessions := m.sessions[folderIndex]
 	if len(sessions) == 0 {
@@ -387,6 +383,39 @@ func commandTreeIcon(row treeRow) string {
 	return "■"
 }
 
+func sessionIndicatorGlyph(row treeRow) string {
+	switch row.typeOf {
+	case rowAgentInstance:
+		return "◆"
+	case rowTerminalInstance:
+		return terminalTreeIcon(row)
+	case rowCommand:
+		return commandTreeIcon(row)
+	default:
+		return ""
+	}
+}
+
+func (m Model) sessionIndicatorStyle(row treeRow) lipgloss.Style {
+	switch row.typeOf {
+	case rowAgentInstance:
+		return m.styles.childIconActive
+	case rowTerminalInstance:
+		return m.terminalTreeIconStyle(row)
+	case rowCommand:
+		if row.status == "running" {
+			return m.styles.childIconActive
+		}
+		return m.styles.childIconDim
+	default:
+		return m.styles.childIconDim
+	}
+}
+
+func (m Model) sessionIndicator(row treeRow) string {
+	return m.sessionIndicatorStyle(row).Render(sessionIndicatorGlyph(row))
+}
+
 func rowHasActiveCommand(row treeRow) bool {
 	command := strings.TrimSpace(row.currentCommand)
 	return command != "" && !isShellCommand(command)
@@ -409,18 +438,13 @@ func (m Model) terminalTreeIconStyle(row treeRow) lipgloss.Style {
 func (m Model) treeLineText(row treeRow, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
-		left := fmt.Sprintf("%s ● %s", m.folderCaret(row.folderIndex), row.displayName)
-		right := ""
-		if count := m.folderSessionCount(row.folderIndex); count > 0 {
-			right = fmt.Sprintf("%d", count)
-		}
-		return treeJustify(left, right, maxWidth)
+		return truncateRight(fmt.Sprintf("%s ● %s", m.folderCaret(row.folderIndex), row.displayName), maxWidth)
 	case rowAgentInstance:
-		return treeJustify(treeChildIndent+"◆ "+row.displayName, "active", maxWidth)
+		return treeJustify(treeChildIndent+sessionIndicatorGlyph(row)+" "+row.displayName, "active", maxWidth)
 	case rowTerminalInstance:
-		return treeJustify(treeChildIndent+terminalTreeIcon(row)+" "+row.displayName, "", maxWidth)
+		return treeJustify(treeChildIndent+sessionIndicatorGlyph(row)+" "+row.displayName, "", maxWidth)
 	case rowCommand:
-		return treeJustify(treeChildIndent+commandTreeIcon(row)+" "+row.displayName, "", maxWidth)
+		return treeJustify(treeChildIndent+sessionIndicatorGlyph(row)+" "+row.displayName, "", maxWidth)
 	default:
 		return ""
 	}
@@ -443,11 +467,6 @@ func treeJustify(left, right string, maxWidth int) string {
 func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 	switch row.typeOf {
 	case rowFolder:
-		count := ""
-		if n := m.folderSessionCount(row.folderIndex); n > 0 {
-			count = m.styles.rowFolderCount.Render(fmt.Sprintf("%d", n))
-		}
-
 		nameStyle := m.styles.rowFolder
 		if m.folderStatus(row.folderIndex) == folderStatusIdle {
 			nameStyle = m.styles.rowFolderIdle
@@ -464,22 +483,15 @@ func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 			dot = m.styles.folderDotActive.Render("●")
 		}
 
-		left := m.styles.detailMeta.Render(m.folderCaret(row.folderIndex)) + " " + dot + " " + nameStyle.Render(row.displayName)
-		leftPlain := fmt.Sprintf("%s ● %s", m.folderCaret(row.folderIndex), row.displayName)
-		gap := maxWidth - lipgloss.Width(leftPlain) - lipgloss.Width(stripANSI(count))
-		if gap < 1 {
-			gap = 1
-		}
-		line := left + strings.Repeat(" ", gap) + count
-		return line
+		return truncateRight(m.styles.detailMeta.Render(m.folderCaret(row.folderIndex))+" "+dot+" "+nameStyle.Render(row.displayName), maxWidth)
 	case rowAgentInstance:
 		name := m.styles.rowSession.Render(row.displayName)
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
 			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		left := treeChildIndent + m.styles.childIconActive.Render("◆") + " " + name
+		left := treeChildIndent + m.sessionIndicator(row) + " " + name
 		right := m.styles.badgeActive.Render("active")
-		leftPlain := treeChildIndent + "◆ " + row.displayName
+		leftPlain := treeChildIndent + sessionIndicatorGlyph(row) + " " + row.displayName
 		gap := maxWidth - lipgloss.Width(leftPlain) - lipgloss.Width("active")
 		if gap < 1 {
 			gap = 1
@@ -490,17 +502,13 @@ func (m Model) treeLineStyled(row treeRow, plain string, maxWidth int) string {
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
 			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		return treeChildIndent + m.terminalTreeIconStyle(row).Render(terminalTreeIcon(row)) + " " + name
+		return treeChildIndent + m.sessionIndicator(row) + " " + name
 	case rowCommand:
 		name := m.styles.rowSession.Render(row.displayName)
 		if selected, ok := m.selectedRow(); ok && selected.sessionName == row.sessionName {
 			name = m.styles.rowSelectedText.Render(row.displayName)
 		}
-		icon := m.styles.childIconDim.Render(commandTreeIcon(row))
-		if row.status == "running" {
-			icon = m.styles.childIconActive.Render(commandTreeIcon(row))
-		}
-		return treeChildIndent + icon + " " + name
+		return treeChildIndent + m.sessionIndicator(row) + " " + name
 	default:
 		return plain
 	}
@@ -645,18 +653,18 @@ func (m Model) commandDetailLines(row treeRow, maxWidth int) []string {
 }
 
 func (m Model) instanceDetailLines(row treeRow, maxWidth int) []string {
-	statusText := m.styles.detailMeta.Render("○ detached")
-	if row.attached {
-		statusText = m.styles.chipPrimary.Render("● attached")
-	}
+	metaText := m.sessionIndicator(row)
 	windowLabel := "windows"
 	if row.windows == 1 {
 		windowLabel = "window"
 	}
+	if row.windows > 0 {
+		metaText += m.styles.detailMeta.Render("  ·  " + fmt.Sprintf("%d %s", row.windows, windowLabel))
+	}
 
 	lines := []string{
 		m.styles.detailName.Render(truncateRight(row.displayName, maxWidth)),
-		statusText + m.styles.detailMeta.Render("  ·  "+fmt.Sprintf("%d %s", row.windows, windowLabel)),
+		metaText,
 		m.dividerLine(maxWidth),
 		"",
 		m.styles.detailSectionHeader.Render("STATUS"),
@@ -710,31 +718,12 @@ func (m Model) instanceDetailBodyLines(row treeRow, maxWidth int) []string {
 }
 
 func (m Model) sessionSummaryLine(row treeRow, maxWidth int) string {
-	var icon, state string
-	switch row.typeOf {
-	case rowAgentInstance, rowTerminalInstance:
-		if row.attached {
-			icon = m.styles.statusDotAttached.Render("●")
-			state = "attached"
-		} else {
-			icon = m.styles.statusDotDetached.Render("○")
-			state = "detached"
-		}
-	case rowCommand:
-		if row.status == "running" {
-			icon = m.styles.statusDotAttached.Render("▶")
-			state = "running"
-		} else {
-			icon = m.styles.statusDotDetached.Render("■")
-			state = "stopped"
-		}
+	nameWidth := maxWidth - lipgloss.Width(sessionIndicatorGlyph(row)) - 1
+	if nameWidth < 1 {
+		nameWidth = 1
 	}
-	name := truncateRight(row.displayName, maxWidth-24)
-	wc := ""
-	if row.windows > 0 {
-		wc = m.styles.windowCount.Render(fmt.Sprintf("%dw", row.windows))
-	}
-	return icon + " " + m.styles.infoValue.Render(name) + "  " + m.styles.detailMeta.Render(state) + "  " + wc
+	name := truncateRight(row.displayName, nameWidth)
+	return m.sessionIndicator(row) + " " + m.styles.infoValue.Render(name)
 }
 
 func (m Model) renderDetailLines(lines []string, innerH, paneWidth int, dim bool) string {
