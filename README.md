@@ -39,8 +39,8 @@ Just run `grove` after install and it will walk you through its configuration.
 
 | Key              | Action                                                  |
 |------------------|---------------------------------------------------------|
-| `↑` / `k`       | Move up                                                  |
-| `↓` / `j`       | Move down                                                |
+| `↑`             | Move up                                                  |
+| `↓`             | Move down                                                |
 | `Enter`          | Attach to selected running session                       |
 | `v`              | Preview selected running session                         |
 | `←` / `→`       | Cycle session windows (in preview mode)                 |

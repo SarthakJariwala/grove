@@ -153,12 +153,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(clearCmd, m.syncSelectionPreview(true, true))
 			}
 			return m, nil
-		case "up", "k":
+		case "up":
 			if m.setSelected(m.selected - 1) {
 				return m, m.syncSelectionPreview(true, true)
 			}
 			return m, nil
-		case "down", "j":
+		case "down":
 			if m.setSelected(m.selected + 1) {
 				return m, m.syncSelectionPreview(true, true)
 			}
@@ -337,12 +337,12 @@ func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.closeOverlay()
 		return m, nil
-	case "up", "k":
+	case "up":
 		if m.overlayIndex > 0 {
 			m.overlayIndex--
 		}
 		return m, nil
-	case "down", "j":
+	case "down":
 		if m.overlayIndex < len(m.agentChoices)-1 {
 			m.overlayIndex++
 		}

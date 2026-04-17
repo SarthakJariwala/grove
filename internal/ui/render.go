@@ -213,7 +213,7 @@ func (m Model) renderHelpBar() string {
 			{"d", "dev command"},
 			{"e", "editor"},
 			{"A", "add folder"},
-			{"j/k", "navigate"},
+			{"↑/↓", "navigate"},
 		}
 		if m.filterQuery != "" {
 			bindings = append(bindings, binding{"esc", "clear filter"})
